@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
 
-## Getting Started
-
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
+video-compressor
+├─ components.json
+├─ Dockerfile
+├─ ffmpeg2pass-0.log
+├─ ffmpeg2pass-0.log.mbtree
+├─ input
+├─ jsconfig.json
+├─ next.config.mjs
+├─ package-lock.json
+├─ package.json
+├─ postcss.config.mjs
+├─ public
+│  ├─ file.svg
+│  ├─ globe.svg
+│  ├─ next.svg
+│  ├─ placeholder.svg
+│  ├─ vercel.svg
+│  └─ window.svg
+├─ src
+│  ├─ app
+│  │  ├─ about
+│  │  │  └─ page.js
+│  │  ├─ api
+│  │  │  ├─ batch
+│  │  │  │  └─ route.js
+│  │  │  ├─ compress
+│  │  │  │  └─ route.js
+│  │  │  ├─ download
+│  │  │  │  └─ [filename]
+│  │  │  │     └─ route.js
+│  │  │  └─ videos
+│  │  │     └─ route.js
+│  │  ├─ batch
+│  │  │  └─ page.js
+│  │  ├─ docs
+│  │  │  └─ page.js
+│  │  ├─ favicon.ico
+│  │  ├─ globals.css
+│  │  ├─ history
+│  │  │  └─ page.js
+│  │  ├─ layout.js
+│  │  ├─ library
+│  │  │  └─ page.js
+│  │  ├─ page.js
+│  │  └─ upload
+│  │     └─ page.js
+│  ├─ components
+│  │  ├─ app-sidebar.jsx
+│  │  ├─ theme-provider.jsx
+│  │  ├─ theme-toggle.jsx
+│  │  └─ ui
+│  │     ├─ alert.jsx
+│  │     ├─ avatar.jsx
+│  │     ├─ badge.jsx
+│  │     ├─ breadcrumb.jsx
+│  │     ├─ button.jsx
+│  │     ├─ card.jsx
+│  │     ├─ checkbox.jsx
+│  │     ├─ collapsible.jsx
+│  │     ├─ dropdown-menu.jsx
+│  │     ├─ input.jsx
+│  │     ├─ label.jsx
+│  │     ├─ progress.jsx
+│  │     ├─ select.jsx
+│  │     ├─ separator.jsx
+│  │     ├─ sheet.jsx
+│  │     ├─ sidebar.jsx
+│  │     ├─ skeleton.jsx
+│  │     ├─ switch.jsx
+│  │     ├─ table.jsx
+│  │     ├─ tabs.jsx
+│  │     ├─ textarea.jsx
+│  │     └─ tooltip.jsx
+│  ├─ hooks
+│  │  └─ use-mobile.js
+│  └─ lib
+│     └─ utils.js
+└─ tailwind.config.js
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
