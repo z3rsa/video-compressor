@@ -11,7 +11,7 @@ if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
 
 const allowedFormats = ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv'];
-const maxFileSize = 500 * 1024 * 1024; // 500MB
+const maxFileSize = 5000 * 1024 * 1024; // 500MB
 
 export async function POST(request) {
     const formData = await request.formData();

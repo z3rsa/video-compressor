@@ -58,6 +58,10 @@ LABEL org.opencontainers.image.source https://github.com/z3rsa/video-compressor
 
 RUN apk update && apk add ffmpeg
 
+# Create the /app/temp directory and set proper ownership
+RUN mkdir -p /app/temp && chown nextjs:nodejs /app/temp
+RUN mkdir -p /app/input && chown nextjs:nodejs /app/input
+
 USER nextjs
 
 EXPOSE 3535

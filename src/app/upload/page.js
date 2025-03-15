@@ -76,14 +76,14 @@ export default function UploadPage() {
     const processFiles = (files) => {
         if (files.length > 0) {
             const totalSizeMB = files.reduce((sum, file) => sum + file.size / (1024 * 1024), 0);
-            if (totalSizeMB > 500) {
-                setFileError("Total file size must be less than 500MB.");
+            if (totalSizeMB > 5000) {
+                setFileError("Total file size must be less than 5GB.");
                 return;
             }
 
             const validFiles = files.filter((file) => {
                 const fileSizeMB = file.size / (1024 * 1024);
-                if (fileSizeMB > 100) {
+                if (fileSizeMB > 5000) {
                     setFileError("File size must be less than 100MB.");
                     return false;
                 } else if (!file.type.startsWith("video/")) {

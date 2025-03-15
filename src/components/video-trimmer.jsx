@@ -28,6 +28,27 @@ const VideoTrimmer = ({ file, onTrim }) => {
     const [trimEnd, setTrimEnd] = useState(100);
     const [isTrimApplied, setIsTrimApplied] = useState(false);
 
+    // Function to calculate optimal time marker interval
+    const getTimeMarkerInterval = (duration) => {
+        if (duration <= 60) {
+            return 5; // Every 5 seconds for short videos
+        } else if (duration <= 600) {
+            return 30; // Every 30 seconds for medium-length videos
+        } else {
+            return 60; // Every 1 minute for long videos
+        }
+    };
+
+    // Function to generate time markers
+    const generateTimeMarkers = (duration) => {
+        const interval = getTimeMarkerInterval(duration);
+        const markers = [];
+        for (let i = 0; i <= duration; i += interval) {
+            markers.push(i);
+        }
+        return markers;
+    };
+
     const togglePlay = (e) => {
         e.preventDefault(); // Prevent form submission
         if (videoRef.current) {
@@ -141,7 +162,7 @@ const VideoTrimmer = ({ file, onTrim }) => {
 
             {/* Trim Tool Label */}
             {isTrimming && (
-                <div className="absolute top-4 left-4 bg-primary/90 text-background font-medium px-3 py-1 rounded-md text-sm">
+                <div className="absolute top-4 left-4 bg-primary/90 text-white px-3 py-1 rounded-md text-sm">
                     Trim Mode
                 </div>
             )}
@@ -208,9 +229,12 @@ const VideoTrimmer = ({ file, onTrim }) => {
 
                     {/* Time Markers */}
                     <div className="flex justify-between text-xs text-white mt-1">
-                        {Array.from({ length: Math.ceil(duration) + 1 }).map((_, index) => (
-                            <span key={index}>
-                                {formatTime(index)}
+                        {generateTimeMarkers(duration).map((time, index) => (
+                            <span
+                                key={index}
+                                style={{ left: `${(time / duration) * 100}%` }}
+                            >
+                                {formatTime(time)}
                             </span>
                         ))}
                     </div>
