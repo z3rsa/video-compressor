@@ -62,6 +62,9 @@ RUN apk update && apk add ffmpeg
 RUN mkdir -p /app/temp && chown nextjs:nodejs /app/temp
 RUN mkdir -p /app/input && chown nextjs:nodejs /app/input
 
+# Ensure the directories are writable
+RUN chmod -R 777 /app/temp /app/input
+
 USER nextjs
 
 EXPOSE 3535

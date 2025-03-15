@@ -97,7 +97,7 @@ export async function POST(request) {
             if (useTrim) {
                 ffmpegCommand += ` -ss ${trimStart} -to ${trimEnd}`;
             }
-            ffmpegCommand += ` -c:v libx264 -b:v ${bitrate}k -pass 2 -c:a aac -b:a ${audioBitrate}k`;
+            ffmpegCommand += ` -c:v libx264 -b:v ${bitrate}k -pass 2 -c:a aac -b:a ${audioBitrate}k -passlogfile "${tempDir}/ffmpeg2pass"`;
 
             if (preserveMetadata) ffmpegCommand += ' -map_metadata 0';
             if (preserveSubtitles) ffmpegCommand += ' -c:s copy';
