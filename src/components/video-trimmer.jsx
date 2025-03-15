@@ -6,6 +6,7 @@ import { Slider } from "@/components/ui/slider";
 import { Play, Pause, Volume2, Volume1, VolumeX, Scissors } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useDrag } from "@use-gesture/react";
 
 const formatTime = (seconds) => {
     const minutes = Math.floor(seconds / 60);
@@ -28,9 +29,10 @@ const VideoTrimmer = ({ file, onTrim }) => {
     const [trimEnd, setTrimEnd] = useState(100);
     const [isTrimApplied, setIsTrimApplied] = useState(false);
 
-    // Function to calculate optimal time marker interval
     const getTimeMarkerInterval = (duration) => {
-        if (duration <= 60) {
+        if (duration <= 10) {
+            return 1; // Every 1 second for very short videos
+        } else if (duration <= 60) {
             return 5; // Every 5 seconds for short videos
         } else if (duration <= 600) {
             return 30; // Every 30 seconds for medium-length videos
@@ -39,7 +41,6 @@ const VideoTrimmer = ({ file, onTrim }) => {
         }
     };
 
-    // Function to generate time markers
     const generateTimeMarkers = (duration) => {
         const interval = getTimeMarkerInterval(duration);
         const markers = [];
@@ -50,7 +51,7 @@ const VideoTrimmer = ({ file, onTrim }) => {
     };
 
     const togglePlay = (e) => {
-        e.preventDefault(); // Prevent form submission
+        e.preventDefault();
         if (videoRef.current) {
             if (isPlaying) {
                 videoRef.current.pause();
@@ -81,14 +82,9 @@ const VideoTrimmer = ({ file, onTrim }) => {
     };
 
     const handleSeek = (value) => {
-        if (videoRef.current && videoRef.current.duration) {
-            const time = (value / 100) * videoRef.current.duration;
-            if (isFinite(time)) {
-                videoRef.current.currentTime = time;
-                setProgress(value);
-                setCurrentTime(time);
-            }
-        }
+        const newProgress = Math.min(Math.max(value, trimStart), trimEnd);
+        setProgress(newProgress);
+        videoRef.current.currentTime = (newProgress / 100) * duration;
     };
 
     const toggleMute = (e) => {
@@ -123,9 +119,7 @@ const VideoTrimmer = ({ file, onTrim }) => {
         setTrimEnd(progress);
     };
 
-    const applyTrim = (e) => {
-        e.preventDefault(); // Prevent form submission
-
+    const applyTrim = () => {
         if (!file || !videoRef.current) return;
 
         const startTime = (trimStart / 100) * videoRef.current.duration;
@@ -139,9 +133,30 @@ const VideoTrimmer = ({ file, onTrim }) => {
 
         // Pass the trim range to the parent component
         onTrim({ startTime, endTime });
-        setIsTrimming(false);
         setIsTrimApplied(true); // Indicate that trim is applied
     };
+
+    const bindTrimStart = useDrag(({ movement: [mx], memo = trimStart }) => {
+        const newTrimStart = Math.min(Math.max(memo + mx / 10, 0), trimEnd - 1);
+        setTrimStart(newTrimStart);
+        if (progress < newTrimStart) {
+            setProgress(newTrimStart);
+            videoRef.current.currentTime = (newTrimStart / 100) * duration;
+        }
+        applyTrim();
+        return memo;
+    });
+
+    const bindTrimEnd = useDrag(({ movement: [mx], memo = trimEnd }) => {
+        const newTrimEnd = Math.max(Math.min(memo + mx / 10, 100), trimStart + 1);
+        setTrimEnd(newTrimEnd);
+        if (progress > newTrimEnd) {
+            setProgress(newTrimEnd);
+            videoRef.current.currentTime = (newTrimEnd / 100) * duration;
+        }
+        applyTrim();
+        return memo;
+    });
 
     return (
         <div
@@ -162,7 +177,7 @@ const VideoTrimmer = ({ file, onTrim }) => {
 
             {/* Trim Tool Label */}
             {isTrimming && (
-                <div className="absolute top-4 left-4 bg-primary/90 text-white px-3 py-1 rounded-md text-sm">
+                <div className="absolute top-4 left-4 bg-primary/90 text-background px-3 py-1 font-medium rounded-md text-sm">
                     Trim Mode
                 </div>
             )}
@@ -216,14 +231,37 @@ const VideoTrimmer = ({ file, onTrim }) => {
                             />
                             {/* Visible Slider Thumb */}
                             <div
-                                className="absolute top-0 h-2 bg-transparent"
+                                className="absolute top-[-450%] h-full bg-transparent"
                                 style={{
                                     left: `${progress}%`,
                                     transform: "translateX(-50%)",
                                 }}
                             >
-                                <div className="h-3 w-1 bg-white rounded-full" />
+                                <div className="relative flex flex-col items-center">
+                                    <div className="mb-1 text-xs text-white bg-black px-1 rounded">
+                                        {formatTime((progress / 100) * duration)}
+                                    </div>
+                                    <div className="h-6 w-1 bg-blue-500 rounded-full" />
+                                </div>
                             </div>
+                            {/* Trim Start Handle */}
+                            <div
+                                {...bindTrimStart()}
+                                className="absolute top-0 h-2 w-2 bg-blue-500 rounded-full cursor-pointer"
+                                style={{
+                                    left: `${trimStart}%`,
+                                    transform: "translateX(-50%)",
+                                }}
+                            />
+                            {/* Trim End Handle */}
+                            <div
+                                {...bindTrimEnd()}
+                                className="absolute top-0 h-2 w-2 bg-blue-500 rounded-full cursor-pointer"
+                                style={{
+                                    left: `${trimEnd}%`,
+                                    transform: "translateX(-50%)",
+                                }}
+                            />
                         </div>
                     </div>
 
@@ -327,19 +365,6 @@ const VideoTrimmer = ({ file, onTrim }) => {
                                             </Button>
                                         </TooltipTrigger>
                                         <TooltipContent>Set End Time</TooltipContent>
-                                    </Tooltip>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                onClick={applyTrim}
-                                                variant="ghost"
-                                                size="icon"
-                                                className="text-white hover:bg-[#111111d1] hover:text-white"
-                                            >
-                                                Apply
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>Apply Trim</TooltipContent>
                                     </Tooltip>
                                 </>
                             ) : (

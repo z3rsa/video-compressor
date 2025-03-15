@@ -70,16 +70,16 @@ export async function POST(request) {
 
             // Validate trim range (if provided)
             let useTrim = false;
-            if (trimStart >= 0 && trimEnd > 0 && trimStart < trimEnd) {
-                if (trimEnd > durationInSeconds) {
-                    console.error("Invalid trim range: End time exceeds video duration");
+            if (trimStart !== 0 && trimEnd !== 0) {
+                if (trimStart >= trimEnd || trimEnd > durationInSeconds) {
+                    console.error("Invalid trim range");
                     return NextResponse.json({ message: 'Invalid trim range' }, { status: 400 });
                 }
                 useTrim = true;
             }
 
             // Calculate target bitrate based on file size
-            const targetFileSizeBytes = (preset === 'discord' ? 10 : size) * 1024 * 1024;
+            const targetFileSizeBytes = (preset === 'discord' ? 9 : size) * 1024 * 1024;
             console.log(`Target file size: ${(targetFileSizeBytes / (1024 * 1024)).toFixed(2)} MB`);
 
             const audioBitrate = 96;
@@ -93,11 +93,9 @@ export async function POST(request) {
             if (useTrim) {
                 ffmpegCommand += ` -ss ${trimStart} -to ${trimEnd}`;
             }
-            ffmpegCommand += ` -c:v libx264 -b:v ${bitrate}k -pass 1 -an -f null /dev/null && ffmpeg -i "${videoPath}"`;
-            if (useTrim) {
-                ffmpegCommand += ` -ss ${trimStart} -to ${trimEnd}`;
-            }
-            ffmpegCommand += ` -c:v libx264 -b:v ${bitrate}k -pass 2 -c:a aac -b:a ${audioBitrate}k -passlogfile "${tempDir}/ffmpeg2pass"`;
+
+            // Adjusted encoding settings for quality + target size
+            ffmpegCommand += ` -c:v libx264 -crf 23 -preset slow -maxrate ${bitrate}k -bufsize ${bitrate * 2}k -c:a aac -b:a ${audioBitrate}k`;
 
             if (preserveMetadata) ffmpegCommand += ' -map_metadata 0';
             if (preserveSubtitles) ffmpegCommand += ' -c:s copy';
