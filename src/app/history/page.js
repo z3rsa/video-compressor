@@ -24,16 +24,12 @@ export default function HistoryPage() {
         <div className="min-h-screen flex flex-col p-4 sm:p-6 md:p-8 bg-background text-foreground">
             {/* Header */}
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl md:text-3xl font-bold">Download History</h1>
+                <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">Download History</h1>
             </div>
 
             {/* Download History Card */}
             <Card className="w-full hover:shadow-lg transition-shadow">
                 <CardHeader>
-                    <CardTitle className="text-xl font-bold flex items-center gap-2">
-                        <Download className="h-5 w-5 text-primary" />
-                        Download History
-                    </CardTitle>
                     <CardDescription className="text-muted-foreground">
                         View your download history for compressed videos.
                     </CardDescription>

@@ -95,7 +95,7 @@ export function AppSidebar({ ...props }) {
                   <FileVideo className="size-4" />
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">
-                  <span className="font-semibold text-lg">Video Compressor</span>
+                  <span className="text-lg font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">Video Compressor</span>
                   <span className="text-xs text-muted-foreground">v1.0.0</span>
                 </div>
               </a>

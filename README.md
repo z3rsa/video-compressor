@@ -1,10 +1,7 @@
-
 ```
 video-compressor
 ├─ components.json
 ├─ Dockerfile
-├─ ffmpeg2pass-0.log
-├─ ffmpeg2pass-0.log.mbtree
 ├─ input
 ├─ jsconfig.json
 ├─ next.config.mjs
@@ -12,12 +9,6 @@ video-compressor
 ├─ package.json
 ├─ postcss.config.mjs
 ├─ public
-│  ├─ file.svg
-│  ├─ globe.svg
-│  ├─ next.svg
-│  ├─ placeholder.svg
-│  ├─ vercel.svg
-│  └─ window.svg
 ├─ src
 │  ├─ app
 │  │  ├─ about
@@ -48,35 +39,39 @@ video-compressor
 │  │     └─ page.js
 │  ├─ components
 │  │  ├─ app-sidebar.jsx
+│  │  ├─ custom-button.jsx
 │  │  ├─ theme-provider.jsx
 │  │  ├─ theme-toggle.jsx
-│  │  └─ ui
-│  │     ├─ alert.jsx
-│  │     ├─ avatar.jsx
-│  │     ├─ badge.jsx
-│  │     ├─ breadcrumb.jsx
-│  │     ├─ button.jsx
-│  │     ├─ card.jsx
-│  │     ├─ checkbox.jsx
-│  │     ├─ collapsible.jsx
-│  │     ├─ dropdown-menu.jsx
-│  │     ├─ input.jsx
-│  │     ├─ label.jsx
-│  │     ├─ progress.jsx
-│  │     ├─ select.jsx
-│  │     ├─ separator.jsx
-│  │     ├─ sheet.jsx
-│  │     ├─ sidebar.jsx
-│  │     ├─ skeleton.jsx
-│  │     ├─ switch.jsx
-│  │     ├─ table.jsx
-│  │     ├─ tabs.jsx
-│  │     ├─ textarea.jsx
-│  │     └─ tooltip.jsx
+│  │  ├─ ui
+│  │  │  ├─ alert.jsx
+│  │  │  ├─ avatar.jsx
+│  │  │  ├─ badge.jsx
+│  │  │  ├─ breadcrumb.jsx
+│  │  │  ├─ button.jsx
+│  │  │  ├─ card.jsx
+│  │  │  ├─ checkbox.jsx
+│  │  │  ├─ collapsible.jsx
+│  │  │  ├─ dialog.jsx
+│  │  │  ├─ dropdown-menu.jsx
+│  │  │  ├─ input.jsx
+│  │  │  ├─ label.jsx
+│  │  │  ├─ progress.jsx
+│  │  │  ├─ select.jsx
+│  │  │  ├─ separator.jsx
+│  │  │  ├─ sheet.jsx
+│  │  │  ├─ sidebar.jsx
+│  │  │  ├─ skeleton.jsx
+│  │  │  ├─ slider.jsx
+│  │  │  ├─ switch.jsx
+│  │  │  ├─ table.jsx
+│  │  │  ├─ tabs.jsx
+│  │  │  ├─ textarea.jsx
+│  │  │  └─ tooltip.jsx
+│  │  ├─ video-player.jsx
+│  │  └─ video-trimmer.jsx
 │  ├─ hooks
 │  │  └─ use-mobile.js
 │  └─ lib
 │     └─ utils.js
 └─ tailwind.config.js
-
 ```

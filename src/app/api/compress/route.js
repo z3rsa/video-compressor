@@ -7,34 +7,53 @@ import { v4 as uuidv4 } from 'uuid';
 const tempDir = path.join(process.cwd(), 'temp');
 const inputDir = path.join(process.cwd(), 'input');
 
-if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
-if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir);
+if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
+
+const allowedFormats = ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv'];
+const maxFileSize = 500 * 1024 * 1024; // 500MB
 
 export async function POST(request) {
     const formData = await request.formData();
-    const videos = formData.getAll('videos'); // For batch processing
+    const videos = formData.getAll('videos');
     const size = formData.get('size');
     const format = formData.get('format');
     const preserveMetadata = formData.get('preserveMetadata') === 'true';
     const preserveSubtitles = formData.get('preserveSubtitles') === 'true';
     const enhancement = formData.get('enhancement');
-    const preset = formData.get('preset'); // Get the selected preset
+    const preset = formData.get('preset');
+    const trimStart = parseFloat(formData.get('trimStart')) || 0;
+    const trimEnd = parseFloat(formData.get('trimEnd')) || 0;
 
     if (!videos || videos.length === 0) {
         return NextResponse.json({ message: 'Missing files' }, { status: 400 });
+    }
+
+    if (!allowedFormats.includes(format)) {
+        return NextResponse.json({ message: 'Unsupported format' }, { status: 400 });
     }
 
     const compressedFiles = [];
 
     try {
         for (const video of videos) {
-            const videoExtension = path.extname(video.name);
+            if (video.size > maxFileSize) {
+                return NextResponse.json({ message: 'File size exceeds limit' }, { status: 400 });
+            }
+
+            const videoExtension = path.extname(video.name).toLowerCase();
+            if (!allowedFormats.includes(videoExtension.slice(1))) {
+                return NextResponse.json({ message: 'Unsupported file type' }, { status: 400 });
+            }
+
             const videoPath = path.join(inputDir, `${uuidv4()}${videoExtension}`);
             const outputVideoPath = path.join(tempDir, `${uuidv4()}-output.${format}`);
 
-            // Save the uploaded file
+            // Save the uploaded file using streams
+            const writeStream = fs.createWriteStream(videoPath);
             const buffer = await video.arrayBuffer();
-            fs.writeFileSync(videoPath, Buffer.from(buffer));
+            writeStream.write(Buffer.from(buffer));
+            writeStream.end();
 
             // Log input file size
             const inputFileSizeBytes = fs.statSync(videoPath).size;
@@ -49,50 +68,46 @@ export async function POST(request) {
             });
             console.log(`Video duration: ${durationInSeconds} seconds`);
 
+            // Validate trim range (if provided)
+            let useTrim = false;
+            if (trimStart >= 0 && trimEnd > 0 && trimStart < trimEnd) {
+                if (trimEnd > durationInSeconds) {
+                    console.error("Invalid trim range: End time exceeds video duration");
+                    return NextResponse.json({ message: 'Invalid trim range' }, { status: 400 });
+                }
+                useTrim = true;
+            }
+
             // Calculate target bitrate based on file size
-            const targetFileSizeBytes = (preset === 'discord' ? 10 : size) * 1024 * 1024; // 10MB for Discord, otherwise use user input
+            const targetFileSizeBytes = (preset === 'discord' ? 10 : size) * 1024 * 1024;
             console.log(`Target file size: ${(targetFileSizeBytes / (1024 * 1024)).toFixed(2)} MB`);
 
-            // Adjust bitrate to account for audio and other streams
-            const audioBitrate = 96; // 96kbps for audio
-            const audioSizeBits = (audioBitrate * 1000) * durationInSeconds; // Audio size in bits
-            const videoSizeBits = (targetFileSizeBytes * 8) - audioSizeBits; // Remaining size for video in bits
-            const bitrate = Math.floor(videoSizeBits / durationInSeconds / 1000); // Video bitrate in kbps
+            const audioBitrate = 96;
+            const audioSizeBits = (audioBitrate * 1000) * durationInSeconds;
+            const videoSizeBits = (targetFileSizeBytes * 8) - audioSizeBits;
+            const bitrate = Math.floor(videoSizeBits / durationInSeconds / 1000);
             console.log(`Calculated video bitrate: ${bitrate}k`);
             console.log(`Calculated audio bitrate: ${audioBitrate}k`);
 
-            // Build FFmpeg command for two-pass encoding
-            let ffmpegCommand = `ffmpeg -y -i "${videoPath}" -c:v libx264 -b:v ${bitrate}k -pass 1 -an -f null /dev/null && `;
-            ffmpegCommand += `ffmpeg -i "${videoPath}" -c:v libx264 -b:v ${bitrate}k -pass 2 -c:a aac -b:a ${audioBitrate}k`;
-
-            // Add metadata preservation if enabled
-            if (preserveMetadata) {
-                ffmpegCommand += ' -map_metadata 0';
-                console.log('Metadata preservation enabled');
+            let ffmpegCommand = `ffmpeg -y -i "${videoPath}"`;
+            if (useTrim) {
+                ffmpegCommand += ` -ss ${trimStart} -to ${trimEnd}`;
             }
-
-            // Add subtitle preservation if enabled
-            if (preserveSubtitles) {
-                ffmpegCommand += ' -c:s copy';
-                console.log('Subtitle preservation enabled');
+            ffmpegCommand += ` -c:v libx264 -b:v ${bitrate}k -pass 1 -an -f null /dev/null && ffmpeg -i "${videoPath}"`;
+            if (useTrim) {
+                ffmpegCommand += ` -ss ${trimStart} -to ${trimEnd}`;
             }
+            ffmpegCommand += ` -c:v libx264 -b:v ${bitrate}k -pass 2 -c:a aac -b:a ${audioBitrate}k`;
 
-            // Add enhancement filters (only if explicitly enabled)
-            if (enhancement === 'noise-reduction') {
-                ffmpegCommand += ' -vf "hqdn3d"';
-                console.log('Noise reduction filter enabled');
-            } else if (enhancement === 'sharpness') {
-                ffmpegCommand += ' -vf "unsharp"';
-                console.log('Sharpness filter enabled');
-            }
+            if (preserveMetadata) ffmpegCommand += ' -map_metadata 0';
+            if (preserveSubtitles) ffmpegCommand += ' -c:s copy';
+            if (enhancement === 'noise-reduction') ffmpegCommand += ' -vf "hqdn3d"';
+            else if (enhancement === 'sharpness') ffmpegCommand += ' -vf "unsharp"';
 
-            // Add output format
             ffmpegCommand += ` "${outputVideoPath}"`;
 
-            // Log FFmpeg command
             console.log(`FFmpeg command: ${ffmpegCommand}`);
 
-            // Execute FFmpeg command
             await new Promise((resolve, reject) => {
                 exec(ffmpegCommand, (error) => {
                     if (error) reject(error);
@@ -100,14 +115,11 @@ export async function POST(request) {
                 });
             });
 
-            // Log output file size
             const outputFileSizeBytes = fs.statSync(outputVideoPath).size;
             console.log(`Output file size: ${(outputFileSizeBytes / (1024 * 1024)).toFixed(2)} MB`);
 
-            // Clean up input file
             fs.unlinkSync(videoPath);
 
-            // Add compressed file to the list
             compressedFiles.push({
                 name: path.basename(outputVideoPath),
                 downloadUrl: `/api/download/${path.basename(outputVideoPath)}`,

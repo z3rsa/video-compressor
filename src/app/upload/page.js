@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -14,6 +14,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { useRouter } from "next/navigation";
+import VideoTrimmer from "@/components/video-trimmer";
 
 export default function UploadPage() {
     const [file, setFile] = useState(null);
@@ -29,7 +31,9 @@ export default function UploadPage() {
     const [enhancement, setEnhancement] = useState("none");
     const [alert, setAlert] = useState({ visible: false, title: "", description: "", type: "default" });
     const [isLoading, setIsLoading] = useState(true);
-    const [isDragging, setIsDragging] = useState(false); // Track drag state
+    const [isDragging, setIsDragging] = useState(false);
+    const [trimRange, setTrimRange] = useState({ startTime: 0, endTime: 0 });
+    const router = useRouter();
 
     // Simulate initial loading
     useEffect(() => {
@@ -113,9 +117,14 @@ export default function UploadPage() {
         }
     };
 
-    // Handle form submission
+    const handleTrim = ({ startTime, endTime }) => {
+        setTrimRange({ startTime, endTime });
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        if (!file || fileError) return;
 
         if (!size) {
             setAlert({
@@ -126,8 +135,6 @@ export default function UploadPage() {
             });
             return;
         }
-
-        if (!file || fileError) return;
 
         setIsCompressing(true);
         setProgress(0);
@@ -152,6 +159,10 @@ export default function UploadPage() {
         formData.append("preserveSubtitles", preserveSubtitles);
         formData.append("enhancement", enhancement);
 
+        // Always append trimStart and trimEnd, even if they are 0
+        formData.append("trimStart", trimRange.startTime);
+        formData.append("trimEnd", trimRange.endTime);
+
         try {
             const response = await fetch("/api/compress", {
                 method: "POST",
@@ -170,6 +181,8 @@ export default function UploadPage() {
                 description: result.message || "Video compressed successfully!",
                 type: "success",
             });
+
+            router.push("/library");
         } catch (error) {
             console.error("Compression error:", error);
             setAlert({
@@ -189,7 +202,7 @@ export default function UploadPage() {
         <div className="min-h-screen flex flex-col p-4 sm:p-6 md:p-8 bg-background text-foreground">
             {/* Header */}
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl md:text-3xl font-bold">Upload & Compress</h1>
+                <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">Upload & Compress</h1>
             </div>
 
             {/* Alert */}
@@ -200,8 +213,7 @@ export default function UploadPage() {
                         : alert.type === "success"
                             ? "border-green-500 dark:border-green-400"
                             : ""
-                        }`}
-                >
+                        }`}>
                     <AlertCircle
                         className={`h-4 w-4 ${alert.type === "error"
                             ? "text-destructive"
@@ -345,6 +357,13 @@ export default function UploadPage() {
                                 )}
                             </div>
 
+                            {/* Video Trimmer */}
+                            {file && (
+                                <div className="space-y-4">
+                                    <VideoTrimmer file={file} onTrim={handleTrim} />
+                                </div>
+                            )}
+
                             <Separator />
 
                             {/* Compression Settings */}
@@ -392,8 +411,7 @@ export default function UploadPage() {
                                 <div className="space-y-2">
                                     <Label
                                         htmlFor="size"
-                                        className="text-sm font-medium text-foreground flex items-center gap-1"
-                                    >
+                                        className="text-sm font-medium text-foreground flex items-center gap-1">
                                         Target File Size (MB)
                                         <Tooltip>
                                             <TooltipTrigger asChild>
@@ -410,6 +428,7 @@ export default function UploadPage() {
                                         name="size"
                                         placeholder="Enter size in MB"
                                         value={size}
+                                        required={!selectedPreset}
                                         disabled={selectedPreset && selectedPreset !== "custom"}
                                         onChange={(e) => setSize(e.target.value)}
                                         className="w-full bg-background text-foreground"
@@ -441,7 +460,7 @@ export default function UploadPage() {
                                             <SelectContent>
                                                 <SelectItem value="mp4">MP4 {selectedPreset === "discord" && <Badge className="bg-transparent text-bg">Discord only accept MP4</Badge>}</SelectItem>
                                                 <SelectItem value="mkv">MKV</SelectItem>
-                                                <SelectItem value="webm">WebM</SelectItem>
+                                                <SelectItem value="mov">MOV</SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>

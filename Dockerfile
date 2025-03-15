@@ -54,11 +54,14 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-LABEL org.opencontainers.image.source https://github.com/z3rsa/manga-tracker
+LABEL org.opencontainers.image.source https://github.com/z3rsa/video-compressor
+
+RUN apk update && apk add ffmpeg
 
 USER nextjs
 
-EXPOSE 3000
+EXPOSE 3535
 
 ENV HOSTNAME="0.0.0.0"
-CMD ["node", "server.js"]
+
+CMD ["npm", "run", "prod"]

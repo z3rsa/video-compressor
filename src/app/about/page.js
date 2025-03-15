@@ -25,7 +25,7 @@ export default function AboutPage() {
         <div className="min-h-screen flex flex-col p-4 sm:p-6 md:p-8 bg-background text-foreground">
             {/* Header */}
             <div className="flex justify-between items-center mb-8">
-                <h1 className="text-2xl md:text-3xl font-bold">About Video Compressor</h1>
+                <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">About Video Compressor</h1>
                 <Button asChild>
                     <Link href="/upload" className="flex items-center gap-2">
                         <Upload className="h-4 w-4" />

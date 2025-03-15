@@ -60,7 +60,7 @@ export default function Home() {
   return (
     <main className="flex-1 p-4 sm:p-6 md:p-8 bg-background text-foreground">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold">Dashboard</h1>
+        <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">Dashboard</h1>
       </div>
       {/* Statistics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-8">
