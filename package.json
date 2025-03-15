@@ -6,7 +6,7 @@
 		"dev": "next dev --turbopack",
 		"build": "next build && cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/",
 		"start": "next start",
-		"prod": "cross-env NODE_ENV=production PORT=3535 HOSTNAME=0.0.0.0 node .next/standalone/server.js",
+		"prod": "NODE_ENV=production PORT=3535 HOSTNAME=0.0.0.0 node .next/standalone/server.js",
 		"lint": "next lint"
 	},
 	"dependencies": {
