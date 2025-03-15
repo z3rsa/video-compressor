@@ -63,5 +63,4 @@ USER nextjs
 EXPOSE 3535
 
 ENV HOSTNAME="0.0.0.0"
-
-CMD ["npm", "run", "prod"]
+CMD ["node", "server.js"]
