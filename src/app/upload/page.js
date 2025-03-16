@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -103,7 +103,7 @@ export default function UploadPage() {
     const handlePresetSelect = (preset) => {
         setSelectedPreset(preset);
         if (preset === "discord") {
-            setSize("10");
+            setSize("9");
             setFormat("mp4");
         } else if (preset === "twitter") {
             setSize("15");

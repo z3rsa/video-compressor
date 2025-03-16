@@ -81,10 +81,17 @@ const VideoTrimmer = ({ file, onTrim }) => {
         }
     };
 
-    const handleSeek = (value) => {
-        const newProgress = Math.min(Math.max(value, trimStart), trimEnd);
-        setProgress(newProgress);
-        videoRef.current.currentTime = (newProgress / 100) * duration;
+    const handleProgressBarClick = (e) => {
+        const progressBar = e.currentTarget; // Get the progress bar element
+        const rect = progressBar.getBoundingClientRect(); // Get the dimensions of the progress bar
+        const clickX = e.clientX - rect.left; // Calculate the X position of the click relative to the progress bar
+        const progressBarWidth = rect.width; // Get the total width of the progress bar
+        const newProgress = (clickX / progressBarWidth) * 100; // Calculate the new progress percentage
+
+        // Ensure the new progress is within the trim range
+        const clampedProgress = Math.min(Math.max(newProgress, trimStart), trimEnd);
+        setProgress(clampedProgress);
+        videoRef.current.currentTime = (clampedProgress / 100) * duration;
     };
 
     const toggleMute = (e) => {
@@ -158,11 +165,17 @@ const VideoTrimmer = ({ file, onTrim }) => {
         return memo;
     });
 
+    const bindSliderThumb = useDrag(({ movement: [mx], memo = progress }) => {
+        const newProgress = Math.min(Math.max(memo + mx / 9.5, trimStart), trimEnd); // Match sensitivity with trim handles
+        setProgress(newProgress);
+        videoRef.current.currentTime = (newProgress / 100) * duration;
+        return memo;
+    });
+
     return (
         <div
             className="relative w-full max-w-6xl mx-auto rounded-xl overflow-hidden bg-[#11111198] shadow-[0_0_20px_rgba(0,0,0,0.2)] backdrop-blur-sm"
             onMouseEnter={() => setShowControls(true)}
-            onMouseLeave={() => setShowControls(false)}
         >
             {/* Video Preview Area */}
             <video
@@ -184,13 +197,8 @@ const VideoTrimmer = ({ file, onTrim }) => {
 
             {showControls && (
                 <div className="absolute bottom-0 mx-auto max-w-4xl left-0 right-0 p-4 m-2 bg-[#11111198] backdrop-blur-md rounded-2xl">
-                    {/* Current Time Display */}
-                    <div className="text-white text-sm mb-2">
-                        Current Time: {formatTime(currentTime)}
-                    </div>
-
                     {/* Timeline/Seek Bar with Trim Handles */}
-                    <div className="flex items-center gap-2 mb-2">
+                    <div className="flex items-center gap-2 mb-2 mt-4">
                         <div className="relative flex-1 h-2 bg-gray-600 rounded-full">
                             {/* Grey Area (Non-Trimmed) */}
                             <div
@@ -204,7 +212,7 @@ const VideoTrimmer = ({ file, onTrim }) => {
                             <Tooltip>
                                 <TooltipTrigger asChild>
                                     <div
-                                        className="absolute top-0 h-full bg-white rounded-full"
+                                        className="absolute top-0 h-full bg-white"
                                         style={{
                                             left: `${trimStart}%`,
                                             width: `${trimEnd - trimStart}%`,
@@ -217,61 +225,85 @@ const VideoTrimmer = ({ file, onTrim }) => {
                             </Tooltip>
                             {/* Grey Area (Non-Trimmed) */}
                             <div
-                                className="absolute top-0 h-full bg-gray-400 rounded-full"
-                                style={{
-                                    left: `${trimEnd}%`,
-                                    width: `${100 - trimEnd}%`,
-                                }}
-                            />
-                            {/* Slider Thumb */}
-                            <Slider
-                                value={[progress]}
-                                onValueChange={(value) => handleSeek(value[0])}
-                                className="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer"
-                            />
-                            {/* Visible Slider Thumb */}
-                            <div
-                                className="absolute top-[-450%] h-full bg-transparent"
-                                style={{
-                                    left: `${progress}%`,
-                                    transform: "translateX(-50%)",
-                                }}
+                                className="relative flex-1 h-2 bg-gray-600 rounded-full cursor-pointer"
+                                onClick={handleProgressBarClick} // Add click handler
                             >
-                                <div className="relative flex flex-col items-center">
-                                    <div className="mb-1 text-xs text-white bg-black px-1 rounded">
-                                        {formatTime((progress / 100) * duration)}
+                                {/* Grey Area (Non-Trimmed) */}
+                                <div
+                                    className="absolute top-0 h-full bg-gray-400 rounded-full"
+                                    style={{
+                                        left: "0%",
+                                        width: `${trimStart}%`,
+                                    }}
+                                />
+                                {/* White Area (Trimmed) */}
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <div
+                                            className="absolute top-0 h-full bg-white"
+                                            style={{
+                                                left: `${trimStart}%`,
+                                                width: `${trimEnd - trimStart}%`,
+                                            }}
+                                        />
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        Trimmed Area: {formatTime((trimStart / 100) * duration)} to {formatTime((trimEnd / 100) * duration)}
+                                    </TooltipContent>
+                                </Tooltip>
+                                {/* Grey Area (Non-Trimmed) */}
+                                <div
+                                    className="absolute top-0 h-full bg-gray-400 rounded-full"
+                                    style={{
+                                        left: `${trimEnd}%`,
+                                        width: `${100 - trimEnd}%`,
+                                    }}
+                                />
+                                {/* Slider Thumb */}
+                                <div
+                                    {...bindSliderThumb()}
+                                    className="absolute top-[-550%] h-full bg-transparent"
+                                    style={{
+                                        left: `${progress}%`,
+                                        transform: "translateX(-50%)",
+                                    }}>
+                                    <div className="relative flex flex-col items-center">
+                                        <div className="mb-1 text-xs text-white bg-black rounded px-2 py-1">
+                                            {formatTime((progress / 100) * duration)}
+                                        </div>
+                                        <div className="h-6 w-1 bg-white rounded-full" />
                                     </div>
-                                    <div className="h-6 w-1 bg-blue-500 rounded-full" />
+                                </div>
+                                {/* Trim Start Handle */}
+                                <div
+                                    {...bindTrimStart()}
+                                    className="absolute top-[-80%] h-5 w-2 bg-white rounded-[10px] cursor-pointer"
+                                    style={{
+                                        left: `${trimStart}%`,
+                                        transform: "translateX(-125%)",
+                                    }}>
+                                    <div className="absolute h-4 w-[2.5px] bg-gray-600 top-[10%] cursor-pointer" style={{ left: `35%` }} />
+                                </div>
+                                {/* Trim End Handle */}
+                                <div
+                                    {...bindTrimEnd()}
+                                    className="absolute top-[-80%] h-5 w-2 bg-white rounded-[10px] cursor-pointer"
+                                    style={{
+                                        left: `${trimEnd}%`,
+                                        transform: "translateX(30%)",
+                                    }}>
+                                    <div className="absolute h-4 w-[2px] bg-gray-600 top-[10%] cursor-pointer" style={{ left: `35%` }} />
                                 </div>
                             </div>
-                            {/* Trim Start Handle */}
-                            <div
-                                {...bindTrimStart()}
-                                className="absolute top-0 h-2 w-2 bg-blue-500 rounded-full cursor-pointer"
-                                style={{
-                                    left: `${trimStart}%`,
-                                    transform: "translateX(-50%)",
-                                }}
-                            />
-                            {/* Trim End Handle */}
-                            <div
-                                {...bindTrimEnd()}
-                                className="absolute top-0 h-2 w-2 bg-blue-500 rounded-full cursor-pointer"
-                                style={{
-                                    left: `${trimEnd}%`,
-                                    transform: "translateX(-50%)",
-                                }}
-                            />
                         </div>
                     </div>
 
                     {/* Time Markers */}
-                    <div className="flex justify-between text-xs text-white mt-1">
+                    <div className="flex justify-between text-xs text-white mt-1 select-none">
                         {generateTimeMarkers(duration).map((time, index) => (
                             <span
                                 key={index}
-                                style={{ left: `${(time / duration) * 100}%` }}
-                            >
+                                style={{ left: `${(time / duration) * 100}%` }}>
                                 {formatTime(time)}
                             </span>
                         ))}

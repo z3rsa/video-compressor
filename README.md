@@ -83,6 +83,10 @@ To get started with the Video Compressor application, follow these steps:
 
 Here’s an overview of the project structure to help you understand how the app is organized:
 
+## Support
+
+If you encounter any issues or have questions, please refer to the [GitHub repository](https://github.com/z3rsa/video-compressor) or contact support.
+
 ```
 video-compressor
 ├─ .dockerignore
@@ -103,6 +107,7 @@ video-compressor
 │  ├─ placeholder.svg
 │  ├─ vercel.svg
 │  └─ window.svg
+├─ README.md
 ├─ src
 │  ├─ app
 │  │  ├─ about
@@ -168,8 +173,5 @@ video-compressor
 │  └─ lib
 │     └─ utils.js
 └─ tailwind.config.js
+
 ```
-
-## Support
-
-If you encounter any issues or have questions, please refer to the [GitHub repository](https://github.com/z3rsa/video-compressor) or contact support.
