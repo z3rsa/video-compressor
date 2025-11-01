@@ -1,30 +1,56 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/custom-button";
 import { Play, Pause, Volume2, Volume1, VolumeX } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-const formatTime = (seconds) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+const fmt = (s) => {
+    if (!Number.isFinite(s) || s < 0) s = 0;
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
 };
 
-const CustomSlider = ({ value, onChange, className }) => {
+function SeekBar({ value, onChange, "aria-label": ariaLabel }) {
+    const barRef = useRef(null);
+
+    const percentToTime = (clientX) => {
+        const rect = barRef.current.getBoundingClientRect();
+        const pct = ((clientX - rect.left) / rect.width) * 100;
+        return Math.min(Math.max(pct, 0), 100);
+    };
+
+    const onPointerDown = (e) => {
+        e.preventDefault();
+        const move = (ev) => onChange(percentToTime(ev.clientX));
+        const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
+
     return (
-        <motion.div
-            className={cn(
-                "relative w-full h-1 bg-white/20 rounded-full cursor-pointer",
-                className
-            )}
-            onClick={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const percentage = (x / rect.width) * 100;
-                onChange(Math.min(Math.max(percentage, 0), 100));
+        <div
+            ref={barRef}
+            role="slider"
+            aria-label={ariaLabel}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.floor(value)}
+            tabIndex={0}
+            onKeyDown={(e) => {
+                if (e.key === "ArrowRight") onChange(Math.min(value + 1, 100));
+                if (e.key === "ArrowLeft") onChange(Math.max(value - 1, 0));
+                if (e.key === "Home") onChange(0);
+                if (e.key === "End") onChange(100);
             }}
+            className="relative w-full h-1 bg-white/20 rounded-full cursor-pointer"
+            onClick={(e) => onChange(percentToTime(e.clientX))}
+            onPointerDown={onPointerDown}
         >
             <motion.div
                 className="absolute top-0 left-0 h-full bg-white rounded-full"
@@ -33,96 +59,121 @@ const CustomSlider = ({ value, onChange, className }) => {
                 animate={{ width: `${value}%` }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
             />
-        </motion.div>
+        </div>
     );
-};
+}
 
-const VideoPlayer = ({ src }) => {
+export default function VideoPlayer({ src, className = "", videoClassName = "" }) {
     const videoRef = useRef(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [volume, setVolume] = useState(1);
-    const [progress, setProgress] = useState(0);
+    const [prevVolume, setPrevVolume] = useState(1);
     const [isMuted, setIsMuted] = useState(false);
-    const [playbackSpeed, setPlaybackSpeed] = useState(1);
-    const [showControls, setShowControls] = useState(false);
+    const [progress, setProgress] = useState(0);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
+    const [playbackSpeed, setPlaybackSpeed] = useState(1);
+    const [showControls, setShowControls] = useState(false);
+
+    const onLoadedMeta = () => {
+        const d = videoRef.current?.duration ?? 0;
+        if (Number.isFinite(d)) setDuration(d);
+    };
+
+    const onTimeUpdate = () => {
+        const v = videoRef.current;
+        if (!v || !duration) return;
+        const pct = (v.currentTime / duration) * 100;
+        setCurrentTime(v.currentTime);
+        setProgress(Number.isFinite(pct) ? Math.min(Math.max(pct, 0), 100) : 0);
+    };
+
+    const handleSeek = (pct) => {
+        const v = videoRef.current;
+        if (!v || !duration) return;
+        const t = (pct / 100) * duration;
+        v.currentTime = t;
+        setProgress(pct);
+        setCurrentTime(t);
+    };
 
     const togglePlay = () => {
-        if (videoRef.current) {
-            if (isPlaying) {
-                videoRef.current.pause();
-            } else {
-                videoRef.current.play();
-            }
-            setIsPlaying(!isPlaying);
-        }
-    };
-
-    const handleVolumeChange = (value) => {
-        if (videoRef.current) {
-            const newVolume = value / 100;
-            videoRef.current.volume = newVolume;
-            setVolume(newVolume);
-            setIsMuted(newVolume === 0);
-        }
-    };
-
-    const handleTimeUpdate = () => {
-        if (videoRef.current) {
-            const progress =
-                (videoRef.current.currentTime / videoRef.current.duration) * 100;
-            setProgress(isFinite(progress) ? progress : 0);
-            setCurrentTime(videoRef.current.currentTime);
-            setDuration(videoRef.current.duration);
-        }
-    };
-
-    const handleSeek = (value) => {
-        if (videoRef.current && videoRef.current.duration) {
-            const time = (value / 100) * videoRef.current.duration;
-            if (isFinite(time)) {
-                videoRef.current.currentTime = time;
-                setProgress(value);
-                setCurrentTime(time); // Update current time immediately
-            }
-        }
+        const v = videoRef.current;
+        if (!v) return;
+        if (v.paused) v.play(); else v.pause();
     };
 
     const toggleMute = () => {
-        if (videoRef.current) {
-            videoRef.current.muted = !isMuted;
-            setIsMuted(!isMuted);
-            if (!isMuted) {
-                setVolume(0);
-            } else {
-                setVolume(1);
-                videoRef.current.volume = 1;
-            }
+        const v = videoRef.current;
+        if (!v) return;
+        if (!isMuted) {
+            setPrevVolume(volume || 0.6);
+            v.muted = true;
+            setIsMuted(true);
+            setVolume(0);
+        } else {
+            v.muted = false;
+            setIsMuted(false);
+            v.volume = prevVolume;
+            setVolume(prevVolume);
         }
     };
 
-    const setSpeed = (speed) => {
-        if (videoRef.current) {
-            videoRef.current.playbackRate = speed;
-            setPlaybackSpeed(speed);
-        }
+    const onVolumeChange = (pct) => {
+        const v = videoRef.current;
+        if (!v) return;
+        const vol = pct / 100;
+        v.volume = vol;
+        v.muted = vol === 0;
+        setIsMuted(vol === 0);
+        setVolume(vol);
+        if (vol > 0) setPrevVolume(vol);
     };
+
+    const setSpeed = (s) => {
+        const v = videoRef.current;
+        if (!v) return;
+        v.playbackRate = s;
+        setPlaybackSpeed(s);
+    };
+
+    // sync playing state even if user taps OS controls, etc.
+    useEffect(() => {
+        const v = videoRef.current;
+        if (!v) return;
+        const onPlay = () => setIsPlaying(true);
+        const onPause = () => setIsPlaying(false);
+        v.addEventListener("play", onPlay);
+        v.addEventListener("pause", onPause);
+        return () => {
+            v.removeEventListener("play", onPlay);
+            v.removeEventListener("pause", onPause);
+        };
+    }, []);
 
     return (
         <motion.div
-            className="relative w-full max-w-6xl mx-auto rounded-xl overflow-hidden bg-[#11111198] shadow-[0_0_20px_rgba(0,0,0,0.2)] backdrop-blur-sm"
+            className={cn(
+                // old: "relative w-full max-w-6xl mx-auto rounded-xl overflow-hidden ..."
+                "relative w-full rounded-xl overflow-hidden bg-[#11111198] shadow-[0_0_20px_rgba(0,0,0,0.2)] backdrop-blur-sm",
+                className
+            )}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
             onMouseEnter={() => setShowControls(true)}
-            onMouseLeave={() => setShowControls(false)}
-        >
+            onMouseLeave={() => setShowControls(false)}>
             <video
                 ref={videoRef}
-                className="w-full"
-                onTimeUpdate={handleTimeUpdate}
+                className={cn(
+                    // old: "w-full"
+                    "w-full h-auto",
+                    videoClassName
+                )}
                 src={src}
+                preload="metadata"
+                onLoadedMetadata={onLoadedMeta}
+                onTimeUpdate={onTimeUpdate}
                 onClick={togglePlay}
             />
 
@@ -133,86 +184,45 @@ const VideoPlayer = ({ src }) => {
                         initial={{ y: 20, opacity: 0, filter: "blur(10px)" }}
                         animate={{ y: 0, opacity: 1, filter: "blur(0px)" }}
                         exit={{ y: 20, opacity: 0, filter: "blur(10px)" }}
-                        transition={{ duration: 0.6, ease: "circInOut", type: "spring" }}
+                        transition={{ duration: 0.4, ease: "circInOut" }}
                     >
                         <div className="flex items-center gap-2 mb-2">
-                            <span className="text-white text-sm">
-                                {formatTime(currentTime)}
-                            </span>
-                            <CustomSlider
-                                value={progress}
-                                onChange={handleSeek}
-                                className="flex-1"
-                            />
-                            <span className="text-white text-sm">{formatTime(duration)}</span>
+                            <span className="text-white text-sm">{fmt(currentTime)}</span>
+                            <SeekBar value={progress} onChange={handleSeek} aria-label="Seek" />
+                            <span className="text-white text-sm">{fmt(duration)}</span>
                         </div>
 
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4">
-                                <motion.div
-                                    whileHover={{ scale: 1.1 }}
-                                    whileTap={{ scale: 0.9 }}
-                                >
-                                    <Button
-                                        onClick={togglePlay}
-                                        variant="ghost"
-                                        size="icon"
-                                        className="text-white hover:bg-[#111111d1] hover:text-white"
-                                    >
-                                        {isPlaying ? (
-                                            <Pause className="h-5 w-5" />
-                                        ) : (
-                                            <Play className="h-5 w-5" />
-                                        )}
+                                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                                    <Button type="button" onClick={togglePlay} variant="ghost" size="icon" className="text-white hover:bg-[#111111d1]">
+                                        {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                                     </Button>
                                 </motion.div>
-                                <div className="flex items-center gap-x-1">
-                                    <motion.div
-                                        whileHover={{ scale: 1.1 }}
-                                        whileTap={{ scale: 0.9 }}
-                                    >
-                                        <Button
-                                            onClick={toggleMute}
-                                            variant="ghost"
-                                            size="icon"
-                                            className="text-white hover:bg-[#111111d1] hover:text-white"
-                                        >
-                                            {isMuted ? (
-                                                <VolumeX className="h-5 w-5" />
-                                            ) : volume > 0.5 ? (
-                                                <Volume2 className="h-5 w-5" />
-                                            ) : (
-                                                <Volume1 className="h-5 w-5" />
-                                            )}
+
+                                <div className="flex items-center gap-2">
+                                    <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                                        <Button type="button" onClick={toggleMute} variant="ghost" size="icon" className="text-white hover:bg-[#111111d1]">
+                                            {isMuted ? <VolumeX className="h-5 w-5" /> : volume > 0.5 ? <Volume2 className="h-5 w-5" /> : <Volume1 className="h-5 w-5" />}
                                         </Button>
                                     </motion.div>
-
-                                    <div className="w-24">
-                                        <CustomSlider
-                                            value={volume * 100}
-                                            onChange={handleVolumeChange}
-                                        />
+                                    <div className="w-28">
+                                        <SeekBar value={volume * 100} onChange={onVolumeChange} aria-label="Volume" />
                                     </div>
                                 </div>
                             </div>
 
                             <div className="flex items-center gap-2">
-                                {[0.5, 1, 1.5, 2].map((speed) => (
-                                    <motion.div
-                                        whileHover={{ scale: 1.1 }}
-                                        whileTap={{ scale: 0.9 }}
-                                        key={speed}
-                                    >
+                                {[0.5, 1, 1.5, 2].map((s) => (
+                                    <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} key={s}>
                                         <Button
-                                            onClick={() => setSpeed(speed)}
+                                            type="button"
+                                            onClick={() => setSpeed(s)}
                                             variant="ghost"
                                             size="icon"
-                                            className={cn(
-                                                "text-white hover:bg-[#111111d1] hover:text-white",
-                                                playbackSpeed === speed && "bg-[#111111d1]"
-                                            )}
+                                            className={cn("text-white hover:bg-[#111111d1]", playbackSpeed === s && "bg-[#111111d1]")}
                                         >
-                                            {speed}x
+                                            {s}x
                                         </Button>
                                     </motion.div>
                                 ))}
@@ -223,6 +233,4 @@ const VideoPlayer = ({ src }) => {
             </AnimatePresence>
         </motion.div>
     );
-};
-
-export default VideoPlayer;
+}

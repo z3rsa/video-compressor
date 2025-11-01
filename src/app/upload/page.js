@@ -1,584 +1,601 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { Label } from "@/components/ui/label";
-import { AlertCircle, FileVideo, Info, Settings, Upload, X, Zap } from "lucide-react";
-import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+
+// shadcn/ui
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+
+// app components
 import VideoTrimmer from "@/components/video-trimmer";
 
+// icons
+import {
+    Upload,
+    Info,
+    CheckCircle2,
+    XCircle,
+    FileVideo,
+    Trash2,
+    Scissors,
+} from "lucide-react";
+
+/**
+ * Copy-paste friendly constants.
+ * Keep UI hint text and validation in sync with these numbers.
+ */
+const MAX_PER_FILE_MB = 5000; // 5 GB per file
+const MAX_TOTAL_MB = 5000; // 5 GB total selection (adjust if you want true multi-file sums > one file)
+
 export default function UploadPage() {
-    const [file, setFile] = useState(null);
-    const [files, setFiles] = useState([]);
-    const [size, setSize] = useState("");
+    const router = useRouter();
+    const fileInputRef = useRef(null);
+
+    // files
+    const [files, setFiles] = useState([]); // File[]
+    const [file, setFile] = useState(null); // first file for trimming
     const [fileError, setFileError] = useState("");
+    const [customName, setCustomName] = useState("");
+
+    // encode options
+    const [selectedPreset, setSelectedPreset] = useState(""); // "", "discord", "twitter", "whatsapp", "custom"
+    const [size, setSize] = useState(""); // MB (string input)
+    const [format, setFormat] = useState("mp4");
+    const [preserveMetadata, setPreserveMetadata] = useState(true);
+    const [preserveSubtitles, setPreserveSubtitles] = useState(true);
+    const [enhancement, setEnhancement] = useState("none"); // "none" | "stabilize" | "denoise" etc (if supported later)
+
+    // trimming
+    const [trimRange, setTrimRange] = useState({ startTime: 0, endTime: 0 });
+
+    // ux
     const [isCompressing, setIsCompressing] = useState(false);
     const [progress, setProgress] = useState(0);
-    const [selectedPreset, setSelectedPreset] = useState(null);
-    const [format, setFormat] = useState("mp4");
-    const [preserveMetadata, setPreserveMetadata] = useState(false);
-    const [preserveSubtitles, setPreserveSubtitles] = useState(false);
-    const [enhancement, setEnhancement] = useState("none");
-    const [alert, setAlert] = useState({ visible: false, title: "", description: "", type: "default" });
-    const [isLoading, setIsLoading] = useState(true);
-    const [isDragging, setIsDragging] = useState(false);
-    const [trimRange, setTrimRange] = useState({ startTime: 0, endTime: 0 });
-    const router = useRouter();
 
-    // Simulate initial loading
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            setIsLoading(false);
-        }, 1000);
-        return () => clearTimeout(timer);
-    }, []);
+    // alert
+    const [alert, setAlert] = useState(null); // {visible, title, description, type: "success" | "error" }
 
-    // Handle file selection (single or batch)
-    const handleFileChange = (e) => {
-        const selectedFiles = Array.from(e.target.files);
-        processFiles(selectedFiles);
-    };
+    // abort controller for submit
+    const submitAbortRef = useRef(null);
 
-    // Handle drag-and-drop
-    const handleDragOver = (e) => {
-        e.preventDefault();
-        setIsDragging(true);
-    };
+    // derived: whether a preset locks the size field
+    const sizeLockedByPreset = useMemo(() => selectedPreset && selectedPreset !== "custom", [selectedPreset]);
 
-    const handleDragLeave = () => {
-        setIsDragging(false);
-    };
+    /** --- Helpers --- */
 
-    const handleDrop = (e) => {
-        e.preventDefault();
-        setIsDragging(false);
-        const droppedFiles = Array.from(e.dataTransfer.files).filter((file) =>
-            file.type.startsWith("video/")
-        );
-        if (droppedFiles.length === 0) {
-            setFileError("Please upload a valid video file.");
+    const openFilePicker = () => fileInputRef.current?.click();
+
+    const formatMB = (bytes) => (bytes / (1024 * 1024)).toFixed(2) + " MB";
+
+    const processFiles = (incoming) => {
+        if (!incoming?.length) return;
+
+        const filesArr = Array.from(incoming);
+
+        const totalMB = filesArr.reduce((sum, f) => sum + f.size / (1024 * 1024), 0);
+        if (totalMB > MAX_TOTAL_MB) {
+            setFileError(`Total file size must be ≤ ${MAX_TOTAL_MB} MB.`);
+            setFiles([]);
+            setFile(null);
             return;
         }
-        processFiles(droppedFiles);
-    };
 
-    // Process files (validation and state update)
-    const processFiles = (files) => {
-        if (files.length > 0) {
-            const totalSizeMB = files.reduce((sum, file) => sum + file.size / (1024 * 1024), 0);
-            if (totalSizeMB > 5000) {
-                setFileError("Total file size must be less than 5GB.");
-                return;
+        const valid = [];
+        for (const f of filesArr) {
+            const mb = f.size / (1024 * 1024);
+            if (!f.type.startsWith("video/")) {
+                setFileError("Please upload a valid video file.");
+                continue;
             }
-
-            const validFiles = files.filter((file) => {
-                const fileSizeMB = file.size / (1024 * 1024);
-                if (fileSizeMB > 5000) {
-                    setFileError("File size must be less than 100MB.");
-                    return false;
-                } else if (!file.type.startsWith("video/")) {
-                    setFileError("Please upload a valid video file.");
-                    return false;
-                }
-                return true;
-            });
-
-            setFiles(validFiles);
-            setFile(validFiles[0]); // Set the first file for single-file processing
-            setFileError("");
+            if (mb > MAX_PER_FILE_MB) {
+                setFileError(`Each file must be ≤ ${MAX_PER_FILE_MB} MB.`);
+                continue;
+            }
+            valid.push(f);
         }
+
+        setFiles(valid);
+        setFile(valid[0] ?? null);
+        setFileError(valid.length ? "" : "No valid files selected.");
     };
 
-    // Handle preset selection
+    const onDrop = (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        if (isCompressing) return;
+        const dropped = evt.dataTransfer?.files;
+        processFiles(dropped);
+    };
+
+    const onDragOver = (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+    };
+
     const handlePresetSelect = (preset) => {
         setSelectedPreset(preset);
-        if (preset === "discord") {
-            setSize("9");
-            setFormat("mp4");
-        } else if (preset === "twitter") {
-            setSize("15");
-            setFormat("mp4");
-        } else if (preset === "whatsapp") {
-            setSize("16");
-            setFormat("mp4");
-        } else {
-            setSize("");
-            setFormat("mp4");
+        switch (preset) {
+            case "discord":
+                setSize("10"); // Discord cap ~10MB
+                setFormat("mp4");
+                break;
+            case "twitter":
+                setSize("15");
+                setFormat("mp4");
+                break;
+            case "whatsapp":
+                setSize("16");
+                setFormat("mp4");
+                break;
+            case "custom":
+            default:
+                setSize("");
+                setFormat("mp4");
+                break;
         }
     };
 
     const handleTrim = ({ startTime, endTime }) => {
-        setTrimRange({ startTime, endTime });
+        // integers prevent drift server-side
+        setTrimRange({
+            startTime: Math.max(0, Math.floor(startTime || 0)),
+            endTime: Math.max(0, Math.floor(endTime || 0)),
+        });
     };
+
+    const clearSelection = () => {
+        setFiles([]);
+        setFile(null);
+        setFileError("");
+        setTrimRange({ startTime: 0, endTime: 0 });
+    };
+
+    const removeAt = (idx) => {
+        const copy = files.slice();
+        copy.splice(idx, 1);
+        setFiles(copy);
+        setFile(copy[0] ?? null);
+    };
+
+    /** --- Submit --- */
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (isCompressing) return;
 
-        if (!file || fileError) return;
-
-        if (!size) {
-            setAlert({
+        if (!files.length) {
+            return setAlert({
                 visible: true,
-                title: "Error",
-                description: "Please specify the desired file size.",
+                title: "No file selected",
+                description: "Choose at least one video file to compress.",
                 type: "error",
             });
-            return;
         }
+
+        // Numeric validation
+        const numericSize = Number(size);
+        if (sizeLockedByPreset) {
+            if (!Number.isFinite(numericSize) || numericSize <= 0) {
+                return setAlert({
+                    visible: true,
+                    title: "Invalid size",
+                    description: "Preset requires a valid positive size in MB.",
+                    type: "error",
+                });
+            }
+            if (selectedPreset === "discord" && numericSize > 10) {
+                return setAlert({
+                    visible: true,
+                    title: "Discord preset overflow",
+                    description: "Discord preset max is 10 MB.",
+                    type: "error",
+                });
+            }
+            if (selectedPreset === "twitter" && numericSize > 15) {
+                return setAlert({
+                    visible: true,
+                    title: "Twitter/X preset overflow",
+                    description: "Twitter preset max is 15 MB.",
+                    type: "error",
+                });
+            }
+            if (selectedPreset === "whatsapp" && numericSize > 16) {
+                return setAlert({
+                    visible: true,
+                    title: "WhatsApp preset overflow",
+                    description: "WhatsApp preset max is 16 MB.",
+                    type: "error",
+                });
+            }
+        } else {
+            // custom
+            if (!Number.isFinite(numericSize) || numericSize <= 0) {
+                return setAlert({
+                    visible: true,
+                    title: "Invalid size",
+                    description: "Enter a valid positive size in MB.",
+                    type: "error",
+                });
+            }
+        }
+
+        // Build form data
+        const formData = new FormData();
+        // NOTE: If your API expects "file" (singular), replace the loop with formData.append("file", files[0]).
+        files.forEach((f) => formData.append("files", f, f.name));
+        formData.append("mode", files.length > 1 ? "batch" : "single");
+        formData.append("customName", customName || "");
+        formData.append("size", String(numericSize)); // MB
+        formData.append("format", format);
+        formData.append("preset", selectedPreset || "custom");
+        formData.append("preserveMetadata", preserveMetadata ? "true" : "false");
+        formData.append("preserveSubtitles", preserveSubtitles ? "true" : "false");
+        formData.append("enhancement", enhancement);
+        formData.append("trimStart", String(Math.max(0, Math.floor(trimRange.startTime))));
+        formData.append("trimEnd", String(Math.max(0, Math.floor(trimRange.endTime))));
+
+        // Abort & progress
+        submitAbortRef.current?.abort();
+        const ctrl = new AbortController();
+        submitAbortRef.current = ctrl;
 
         setIsCompressing(true);
         setProgress(0);
 
-        // Simulate progress updates
-        const progressInterval = setInterval(() => {
-            setProgress((prevProgress) => {
-                const newProgress = prevProgress + 5;
-                if (newProgress >= 100) {
-                    clearInterval(progressInterval);
-                    return 100;
-                }
-                return newProgress;
-            });
-        }, 500);
-
-        const formData = new FormData();
-        files.forEach((file) => formData.append("videos", file));
-        formData.append("size", size);
-        formData.append("format", format);
-        formData.append("preserveMetadata", preserveMetadata);
-        formData.append("preserveSubtitles", preserveSubtitles);
-        formData.append("enhancement", enhancement);
-
-        // Always append trimStart and trimEnd, even if they are 0
-        formData.append("trimStart", trimRange.startTime);
-        formData.append("trimEnd", trimRange.endTime);
+        // optimistic progress: never claim 100% until server responds OK
+        const interval = setInterval(() => {
+            setProgress((p) => Math.min(p + 4, 95));
+        }, 400);
 
         try {
-            const response = await fetch("/api/compress", {
+            const res = await fetch("/api/compress", {
                 method: "POST",
                 body: formData,
+                signal: ctrl.signal,
             });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || "Compression failed");
+            if (!res.ok) {
+                let message = `Compression failed (${res.status})`;
+                try {
+                    const data = await res.json();
+                    message = data?.message || message;
+                } catch { }
+                throw new Error(message);
             }
 
-            const result = await response.json();
+            const result = await res.json().catch(() => ({}));
+            setProgress(100);
+
             setAlert({
                 visible: true,
                 title: "Success",
-                description: result.message || "Video compressed successfully!",
+                description: result?.message || "Video compressed successfully!",
                 type: "success",
             });
 
-            router.push("/library");
-        } catch (error) {
-            console.error("Compression error:", error);
-            setAlert({
-                visible: true,
-                title: "Error",
-                description: "Error during compression. Please try again.",
-                type: "error",
-            });
+            // small delay so users can see 100%
+            setTimeout(() => router.push("/library"), 350);
+        } catch (err) {
+            if (err.name !== "AbortError") {
+                setAlert({
+                    visible: true,
+                    title: "Error",
+                    description: err?.message || "Error during compression. Please try again.",
+                    type: "error",
+                });
+            }
         } finally {
-            clearInterval(progressInterval);
+            clearInterval(interval);
             setIsCompressing(false);
-            setProgress(0);
         }
     };
 
+    useEffect(() => {
+        return () => {
+            submitAbortRef.current?.abort();
+        };
+    }, []);
+
+    /** --- JSX --- */
+
     return (
-        <div className="min-h-screen flex flex-col p-4 sm:p-6 md:p-8 bg-background text-foreground">
-            {/* Header */}
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">Upload & Compress</h1>
+        <main className="flex-1 p-4 sm:p-6 md:p-8 bg-background text-foreground">
+            <div className="mb-6">
+                <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                    Upload & Compress
+                </h1>
+                <p className="text-sm text-muted-foreground mt-1">
+                    Drop a video (or a few) and choose a target size. Works offline with your local server.
+                </p>
             </div>
 
-            {/* Alert */}
-            {alert.visible && (
+            {alert?.visible && (
                 <Alert
-                    className={`mb-6 ${alert.type === "error"
-                        ? "border-destructive"
-                        : alert.type === "success"
-                            ? "border-green-500 dark:border-green-400"
-                            : ""
-                        }`}>
-                    <AlertCircle
-                        className={`h-4 w-4 ${alert.type === "error"
-                            ? "text-destructive"
-                            : alert.type === "success"
-                                ? "text-green-500 dark:text-green-400"
-                                : ""
-                            }`}
-                    />
-                    <AlertTitle
-                        className={`${alert.type === "error"
-                            ? "text-destructive"
-                            : alert.type === "success"
-                                ? "text-green-500 dark:text-green-400"
-                                : ""
-                            }`}
-                    >
-                        {alert.title}
-                    </AlertTitle>
+                    className={`mb-4 ${alert.type === "error" ? "border-destructive/30 bg-destructive/10" : "border-green-500/30 bg-green-500/10"}`}
+                >
+                    {alert.type === "error" ? (
+                        <XCircle className="h-4 w-4" />
+                    ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                    )}
+                    <AlertTitle>{alert.title}</AlertTitle>
                     <AlertDescription>{alert.description}</AlertDescription>
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setAlert({ visible: false, title: "", description: "", type: "default" })}
-                        className="absolute top-2 right-2"
-                    >
-                        <X className="h-4 w-4" />
-                    </Button>
                 </Alert>
             )}
 
-            {/* Upload & Compress Card */}
-            <Card className="w-full hover:shadow-lg transition-shadow bg-card text-card-foreground">
-                <CardHeader>
-                    <CardTitle className="text-xl font-bold flex items-center gap-2">
-                        <Upload className="h-5 w-5 text-primary" />
-                        Upload Video
-                    </CardTitle>
-                    <CardDescription className="text-muted-foreground">
-                        Choose a video file and specify the desired size for compression.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    {isLoading ? (
-                        // Loading state for the form
-                        <div className="space-y-6">
-                            <div className="space-y-2">
-                                <Skeleton className="h-4 w-24" />
-                                <Skeleton className="h-32 rounded-lg" />
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                {/* Left: File picker + file list */}
+                <div className="lg:col-span-2 space-y-4">
+                    {/* Trimmer or batch note */}
+                    {file && files.length === 1 ? (
+                        <Card className="transition-shadow hover:shadow-lg">
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2">
+                                    <Scissors className="h-5 w-5 text-primary" />
+                                    Trim Video (optional)
+                                </CardTitle>
+                                <CardDescription>Select a portion of the video to compress.</CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <VideoTrimmer file={file} onTrim={handleTrim} />
+                            </CardContent>
+                        </Card>
+                    ) : files.length > 1 ? (
+                        <Alert className="border-blue-500/30 bg-blue-500/10">
+                            <Info className="h-4 w-4" />
+                            <AlertTitle>Batch mode</AlertTitle>
+                            <AlertDescription>
+                                Trimming is available for single-file uploads only.
+                            </AlertDescription>
+                        </Alert>
+                    ) : null}
+
+                    <Card className={`transition-shadow hover:shadow-lg ${isCompressing ? "pointer-events-none opacity-70" : ""}`}>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <Upload className="h-5 w-5 text-primary" />
+                                Select Video{files.length !== 1 ? "s" : ""}
+                            </CardTitle>
+                            <CardDescription>
+                                Max {MAX_PER_FILE_MB} MB per file • Total ≤ {MAX_TOTAL_MB} MB
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            {/* Drop zone */}
+                            <div
+                                onDrop={onDrop}
+                                onDragOver={onDragOver}
+                                onClick={openFilePicker}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") openFilePicker();
+                                }}
+                                className="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                                aria-label="Click or drag video files to upload"
+                            >
+                                <FileVideo className="mx-auto h-10 w-10 text-muted-foreground mb-2" />
+                                <p className="font-medium">Drop your video files here</p>
+                                <p className="text-sm text-muted-foreground">
+                                    or click to choose from your computer
+                                </p>
+                                <input
+                                    id="video"
+                                    ref={fileInputRef}
+                                    type="file"
+                                    className="hidden"
+                                    accept="video/*"
+                                    multiple
+                                    onChange={(e) => processFiles(e.target.files)}
+                                />
                             </div>
-                            <Separator />
-                            <div className="space-y-4">
-                                <div className="flex items-center gap-2">
-                                    <Skeleton className="h-5 w-5 rounded-full" />
-                                    <Skeleton className="h-4 w-48" />
+
+                            {/* File error */}
+                            {fileError && (
+                                <p className="text-sm text-destructive mt-2">{fileError}</p>
+                            )}
+
+                            {/* Selected files */}
+                            {files.length > 0 && (
+                                <ul className="mt-4 space-y-2">
+                                    {files.map((f, i) => (
+                                        <li
+                                            key={`${f.name}-${i}`}
+                                            className="flex items-center justify-between rounded-lg bg-secondary/40 px-3 py-2"
+                                        >
+                                            <div className="min-w-0">
+                                                <p className="truncate text-sm font-medium">{f.name}</p>
+                                                <p className="text-xs text-muted-foreground">{formatMB(f.size)}</p>
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="shrink-0"
+                                                onClick={() => removeAt(i)}
+                                                aria-label={`Remove ${f.name}`}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+
+                            {/* Clear button */}
+                            {files.length > 0 && (
+                                <div className="mt-3">
+                                    <Button type="button" variant="secondary" onClick={clearSelection}>
+                                        Clear selection
+                                    </Button>
                                 </div>
-                                <div className="space-y-2">
-                                    <Skeleton className="h-4 w-24" />
-                                    <Skeleton className="h-10 w-full" />
-                                </div>
-                                <div className="space-y-2">
-                                    <Skeleton className="h-4 w-24" />
-                                    <Skeleton className="h-10 w-full" />
-                                </div>
-                                <div className="space-y-4 bg-secondary/50 p-4 rounded-lg">
-                                    <div className="flex items-center gap-2">
-                                        <Skeleton className="h-5 w-5 rounded-full" />
-                                        <Skeleton className="h-4 w-48" />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Skeleton className="h-4 w-24" />
-                                        <Skeleton className="h-10 w-full" />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Skeleton className="h-4 w-24" />
-                                        <Skeleton className="h-10 w-full" />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Skeleton className="h-4 w-24" />
-                                        <Skeleton className="h-10 w-full" />
-                                    </div>
-                                </div>
-                            </div>
-                            <Skeleton className="h-10 w-full" />
-                        </div>
-                    ) : (
-                        // Actual form content
-                        <form className="space-y-6" onSubmit={handleSubmit}>
-                            {/* File Upload */}
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
+
+                {/* Right: Options + submit */}
+                <div className="space-y-4">
+                    <Card className="transition-shadow hover:shadow-lg">
+                        <CardHeader>
+                            <CardTitle>Compression Options</CardTitle>
+                            <CardDescription>Pick a preset or customize your target.</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            {/* Custom File Name */}
                             <div className="space-y-2">
-                                <Label htmlFor="video" className="text-sm font-medium text-foreground">
-                                    Video File
-                                </Label>
-                                <div
-                                    className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-8 cursor-pointer transition-colors ${file ? "border-primary bg-primary/5" : isDragging ? "border-primary bg-primary/10" : "border-border hover:border-primary/50 hover:bg-secondary/50"
-                                        }`}
-                                    onDragOver={handleDragOver}
-                                    onDragLeave={handleDragLeave}
-                                    onDrop={handleDrop}
-                                >
-                                    <input
-                                        type="file"
-                                        id="video"
-                                        name="video"
-                                        accept="video/*"
-                                        onChange={handleFileChange}
-                                        className="hidden"
-                                        multiple
-                                    />
-                                    <label htmlFor="video" className="text-center cursor-pointer">
-                                        {file ? (
-                                            <div className="space-y-2">
-                                                <div className="bg-primary/10 p-3 rounded-full mx-auto flex gap-2 items-center">
-                                                    <FileVideo className="h-6 w-6 text-primary" />
-                                                    {file.name}
-                                                </div>
-                                                <p className="text-xs text-muted-foreground">
-                                                    {(file.size / (1024 * 1024)).toFixed(2)} MB
-                                                </p>
-                                                <p className="text-xs text-primary">Click to change</p>
-                                            </div>
-                                        ) : (
-                                            <div className="space-y-2">
-                                                <div className="bg-secondary p-3 rounded-full mx-auto flex items-center justify-center gap-2">
-                                                    <Upload className="h-6 w-6 text-muted-foreground" />
-                                                    <span>{isDragging ? "Drop the file here" : "Please upload a file"}</span>
-                                                </div>
-                                                <p className="text-sm text-muted-foreground">
-                                                    Drag and drop files here or click to browse
-                                                </p>
-                                                <p className="text-xs text-muted-foreground">
-                                                    Supports MP4, MOV, AVI, and other video formats (max 100MB)
-                                                </p>
-                                            </div>
-                                        )}
-                                    </label>
-                                </div>
-                                {fileError && (
-                                    <p className="text-sm text-destructive flex items-center gap-1 mt-2">
-                                        <AlertCircle className="h-4 w-4" /> {fileError}
+                                <Label htmlFor="customName">Output File Name</Label>
+                                <Input
+                                    id="customName"
+                                    placeholder="e.g. MyVacationClip"
+                                    value={customName}
+                                    onChange={(e) => setCustomName(e.target.value.trimStart())}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Leave empty to auto-name as <code>Vicom 1</code>, <code>Vicom {`metadata`}</code>, or a timestamp.
+                                </p>
+                            </div>
+
+                            {/* Preset */}
+                            <div className="space-y-2">
+                                <Label>Preset</Label>
+                                <Select value={selectedPreset} onValueChange={handlePresetSelect}>
+                                    <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Select a preset" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="discord">Discord (Max 10MB)</SelectItem>
+                                        <SelectItem value="twitter">Twitter/X (Max 15MB)</SelectItem>
+                                        <SelectItem value="whatsapp">WhatsApp (Max 16MB)</SelectItem>
+                                        <SelectItem value="custom">Custom</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            {/* Size */}
+                            <div className="space-y-2">
+                                <Label htmlFor="size">Target size (MB)</Label>
+                                <Input
+                                    id="size"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    placeholder={sizeLockedByPreset ? "Preset controlled" : "e.g. 25"}
+                                    value={size}
+                                    onChange={(e) => setSize(e.target.value.replace(/[^\d.]/g, ""))}
+                                    disabled={sizeLockedByPreset}
+                                />
+                                {sizeLockedByPreset && (
+                                    <p className="text-xs text-muted-foreground">
+                                        Controlled by <span className="font-medium">{selectedPreset}</span> preset.
                                     </p>
                                 )}
                             </div>
 
-                            {/* Video Trimmer */}
-                            {file && (
-                                <div className="space-y-4">
-                                    <VideoTrimmer file={file} onTrim={handleTrim} />
-                                </div>
-                            )}
-
-                            <Separator />
-
-                            {/* Compression Settings */}
-                            <div className="space-y-4">
-                                <div className="flex items-center gap-2">
-                                    <Settings className="h-5 w-5 text-primary" />
-                                    <h3 className="text-lg font-medium">Compression Settings</h3>
-                                </div>
-
-                                {/* Preset Selector */}
-                                <div className="space-y-2">
-                                    <Label
-                                        htmlFor="preset"
-                                        className="text-sm font-medium text-foreground flex items-center gap-1"
-                                    >
-                                        Preset
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                                <p>Choose a preset for common platforms or customize your own settings</p>
-                                            </TooltipContent>
-                                        </Tooltip>
-                                    </Label>
-                                    <Select onValueChange={handlePresetSelect}>
-                                        <SelectTrigger className="w-full">
-                                            <SelectValue placeholder="Select a preset" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="discord">
-                                                Discord (Max 10MB)
-                                                <Badge className="bg-transparent text-bg">
-                                                    Optimized for sharing on Discord with a max size of 10MB.
-                                                </Badge>
-                                            </SelectItem>
-                                            <SelectItem value="twitter">Twitter (Max 15MB)</SelectItem>
-                                            <SelectItem value="whatsapp">WhatsApp (Max 16MB)</SelectItem>
-                                            <SelectItem value="custom">Custom</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                {/* Size Input */}
-                                <div className="space-y-2">
-                                    <Label
-                                        htmlFor="size"
-                                        className="text-sm font-medium text-foreground flex items-center gap-1">
-                                        Target File Size (MB)
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                                <p>The maximum size your compressed video will be</p>
-                                            </TooltipContent>
-                                        </Tooltip>
-                                    </Label>
-                                    <Input
-                                        type="number"
-                                        id="size"
-                                        name="size"
-                                        placeholder="Enter size in MB"
-                                        value={size}
-                                        required={!selectedPreset}
-                                        disabled={selectedPreset && selectedPreset !== "custom"}
-                                        onChange={(e) => setSize(e.target.value)}
-                                        className="w-full bg-background text-foreground"
-                                    />
-                                </div>
-
-                                {/* Advanced Options */}
-                                <div className="space-y-4 bg-secondary/50 p-4 rounded-lg">
-                                    <div className="flex items-center gap-2">
-                                        <Zap className="h-5 w-5 text-primary" />
-                                        <h3 className="text-md font-medium">Advanced Options</h3>
-                                    </div>
-
-                                    {/* Output Format */}
-                                    <div className="space-y-2">
-                                        <Label htmlFor="format" className="text-sm font-medium text-foreground">
-                                            Output Format
-                                        </Label>
-                                        <Select
-                                            onValueChange={(value) => setFormat(value)}
-                                            value={format}
-                                            disabled={
-                                                selectedPreset === "discord" ||
-                                                selectedPreset === "twitter" ||
-                                                selectedPreset === "whatsapp"}>
-                                            <SelectTrigger className="w-full">
-                                                <SelectValue placeholder="Select format" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="mp4">MP4 {selectedPreset === "discord" && <Badge className="bg-transparent text-bg">Discord only accept MP4</Badge>}</SelectItem>
-                                                <SelectItem value="mkv">MKV</SelectItem>
-                                                <SelectItem value="mov">MOV</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
-                                    {/* Metadata & Subtitle Preservation */}
-                                    <div className="space-y-2">
-                                        <Label className="text-sm font-medium text-foreground">Preservation Options</Label>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                            {/* Preserve Metadata */}
-                                            <div className="flex items-center space-x-2 bg-background p-3 rounded-md">
-                                                <Checkbox
-                                                    id="metadata"
-                                                    checked={preserveMetadata}
-                                                    onCheckedChange={setPreserveMetadata}
-                                                />
-                                                <Label htmlFor="metadata" className="text-sm cursor-pointer">
-                                                    Preserve Metadata
-                                                </Label>
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-                                                    </TooltipTrigger>
-                                                    <TooltipContent>
-                                                        <p>
-                                                            Preserve metadata such as title, author, and creation date from the original video file.
-                                                        </p>
-                                                    </TooltipContent>
-                                                </Tooltip>
-                                            </div>
-
-                                            {/* Preserve Subtitles */}
-                                            <div className="flex items-center space-x-2 bg-background p-3 rounded-md">
-                                                <Checkbox
-                                                    id="subtitles"
-                                                    checked={preserveSubtitles}
-                                                    onCheckedChange={setPreserveSubtitles}
-                                                />
-                                                <Label htmlFor="subtitles" className="text-sm cursor-pointer">
-                                                    Preserve Subtitles
-                                                </Label>
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-                                                    </TooltipTrigger>
-                                                    <TooltipContent>
-                                                        <p>
-                                                            Keep subtitles from the original video file in the compressed output.
-                                                        </p>
-                                                    </TooltipContent>
-                                                </Tooltip>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Enhancement */}
-                                    <div className="space-y-2">
-                                        <Label htmlFor="enhancement" className="text-sm font-medium text-foreground">
-                                            Video Enhancement
-                                        </Label>
-                                        <Select onValueChange={(value) => setEnhancement(value)} value={enhancement}>
-                                            <SelectTrigger className="w-full">
-                                                <SelectValue placeholder="Select enhancement" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="none">None</SelectItem>
-                                                <SelectItem value="noise-reduction">Noise Reduction</SelectItem>
-                                                <SelectItem value="sharpness">Sharpness</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        onClick={() => {
-                                            setFormat("mp4");
-                                            setPreserveMetadata(false);
-                                            setPreserveSubtitles(false);
-                                            setEnhancement("none");
-                                        }}
-                                        className="w-full mt-2">
-                                        Reset Advanced Options
-                                    </Button>
-                                </div>
+                            {/* Format */}
+                            <div className="space-y-2">
+                                <Label htmlFor="format">Format</Label>
+                                <Select value={format} onValueChange={setFormat}>
+                                    <SelectTrigger id="format" className="w-full">
+                                        <SelectValue placeholder="Choose format" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="mp4">MP4 (H.264/AAC)</SelectItem>
+                                        <SelectItem value="webm">WEBM (VP9/Opus)</SelectItem>
+                                        <SelectItem value="av1">MP4 (AV1/AAC)</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
 
-                            {/* Progress Bar (only visible when compressing) */}
+                            {/* Toggles */}
+                            <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                    <Label>Preserve metadata</Label>
+                                    <p className="text-xs text-muted-foreground">Keep title, creation date, etc.</p>
+                                </div>
+                                <Switch checked={preserveMetadata} onCheckedChange={setPreserveMetadata} />
+                            </div>
+
+                            <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                    <Label>Preserve subtitles</Label>
+                                    <p className="text-xs text-muted-foreground">Retain embedded subtitle tracks.</p>
+                                </div>
+                                <Switch checked={preserveSubtitles} onCheckedChange={setPreserveSubtitles} />
+                            </div>
+
+                            {/* Enhancement (future) */}
+                            <div className="space-y-2">
+                                <Label htmlFor="enhancement">Enhancement (optional)</Label>
+                                <Select value={enhancement} onValueChange={setEnhancement}>
+                                    <SelectTrigger id="enhancement" className="w-full">
+                                        <SelectValue placeholder="None" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="none">None</SelectItem>
+                                        <SelectItem value="stabilize">Stabilize (if supported)</SelectItem>
+                                        <SelectItem value="denoise">Denoise (if supported)</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card className="transition-shadow hover:shadow-lg">
+                        <CardHeader>
+                            <CardTitle>Start Compression</CardTitle>
+                            <CardDescription>We’ll process locally via your server.</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <Button
+                                type="submit"
+                                className="w-full"
+                                disabled={isCompressing || !files.length || !!fileError}
+                            >
+                                {isCompressing ? "Compressing…" : "Compress"}
+                            </Button>
+
+                            {/* Progress */}
                             {isCompressing && (
                                 <div className="space-y-2">
-                                    <div className="flex justify-between text-sm">
-                                        <span>Compressing...</span>
-                                        <span>{progress}%</span>
-                                    </div>
-                                    <Progress value={progress} className="h-2" />
+                                    <Progress value={progress} />
+                                    <p className="text-xs text-muted-foreground">
+                                        {progress}% — don’t close this tab until it completes.
+                                    </p>
                                 </div>
                             )}
 
-                            {/* Compress Button */}
-                            <Button
-                                type="submit"
-                                disabled={isCompressing || !file || fileError}
-                                className="w-full"
-                                size="lg">
-                                {isCompressing ? (
-                                    <span className="flex items-center gap-2">
-                                        <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
-                                        Compressing...
-                                    </span>
-                                ) : (
-                                    <span className="flex items-center gap-2">
-                                        <Zap className="h-5 w-5" />
-                                        Compress Video
-                                    </span>
-                                )}
-                            </Button>
-                        </form>
-                    )}
-                </CardContent>
-            </Card>
-        </div>
+                            {/* Cancel */}
+                            {isCompressing && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    className="w-full"
+                                    onClick={() => {
+                                        submitAbortRef.current?.abort();
+                                        setIsCompressing(false);
+                                        setProgress(0);
+                                        setAlert({
+                                            visible: true,
+                                            title: "Canceled",
+                                            description: "Upload/compression has been canceled.",
+                                            type: "error",
+                                        });
+                                    }}
+                                >
+                                    Cancel
+                                </Button>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
+            </form>
+        </main>
     );
 }

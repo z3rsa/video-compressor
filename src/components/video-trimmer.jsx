@@ -1,448 +1,368 @@
 "use client";
 
-import React, { useRef, useState } from "react";
-import { Button } from "@/components/custom-button"; // Use custom button
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/custom-button";
 import { Slider } from "@/components/ui/slider";
 import { Play, Pause, Volume2, Volume1, VolumeX, Scissors } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
-import { useDrag } from "@use-gesture/react";
 
-const formatTime = (seconds) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+const fmt = (s) => {
+    if (!Number.isFinite(s) || s < 0) s = 0;
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
 };
 
-const VideoTrimmer = ({ file, onTrim }) => {
+export default function VideoTrimmer({ file, onTrim }) {
     const videoRef = useRef(null);
+    const barRef = useRef(null);
+    const [objectUrl, setObjectUrl] = useState(null);
+
     const [isPlaying, setIsPlaying] = useState(false);
     const [volume, setVolume] = useState(1);
-    const [progress, setProgress] = useState(0);
+    const [prevVolume, setPrevVolume] = useState(1);
     const [isMuted, setIsMuted] = useState(false);
-    const [playbackSpeed, setPlaybackSpeed] = useState(1);
-    const [showControls, setShowControls] = useState(false);
+
+    const [progressPct, setProgressPct] = useState(0);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
+
     const [isTrimming, setIsTrimming] = useState(false);
-    const [trimStart, setTrimStart] = useState(0);
-    const [trimEnd, setTrimEnd] = useState(100);
-    const [isTrimApplied, setIsTrimApplied] = useState(false);
+    const [trimStartPct, setTrimStartPct] = useState(0);
+    const [trimEndPct, setTrimEndPct] = useState(100);
 
-    const getTimeMarkerInterval = (duration) => {
-        if (duration <= 10) {
-            return 1; // Every 1 second for very short videos
-        } else if (duration <= 60) {
-            return 5; // Every 5 seconds for short videos
-        } else if (duration <= 600) {
-            return 30; // Every 30 seconds for medium-length videos
-        } else {
-            return 60; // Every 1 minute for long videos
-        }
+    // Create/revoke object URL safely
+    useEffect(() => {
+        if (!file) return;
+        const url = URL.createObjectURL(file);
+        setObjectUrl(url);
+        return () => {
+            URL.revokeObjectURL(url);
+            setObjectUrl(null);
+        };
+    }, [file]);
+
+    // Duration once
+    const onLoadedMeta = () => {
+        const d = videoRef.current?.duration ?? 0;
+        if (Number.isFinite(d)) setDuration(d);
     };
 
-    const generateTimeMarkers = (duration) => {
-        const interval = getTimeMarkerInterval(duration);
-        const markers = [];
-        for (let i = 0; i <= duration; i += interval) {
-            markers.push(i);
+    // Derived trimmed bounds (seconds)
+    const { minTime, maxTime, isFullRange } = useMemo(() => {
+        const min = (trimStartPct / 100) * (duration || 0);
+        const max = (trimEndPct / 100) * (duration || 0);
+        return {
+            minTime: Number.isFinite(min) ? min : 0,
+            maxTime: Number.isFinite(max) ? max : 0,
+            isFullRange: Math.round(trimStartPct) === 0 && Math.round(trimEndPct) === 100,
+        };
+    }, [trimStartPct, trimEndPct, duration]);
+
+    // Keep playhead updated + loop inside trimmed range
+    const onTimeUpdate = () => {
+        const v = videoRef.current;
+        if (!v || !duration) return;
+
+        // If not full range, clamp + wrap at end
+        if (!isFullRange) {
+            // clamp lower
+            if (v.currentTime < minTime) {
+                v.currentTime = minTime;
+            }
+            // If we reached (or slightly overshot) the end, wrap to start & continue
+            // epsilon helps avoid sticking on boundary due to frame/time rounding
+            const epsilon = 0.05;
+            if (v.currentTime >= maxTime - epsilon) {
+                v.currentTime = minTime;
+                if (!v.paused) v.play(); // keep playing on wrap
+            }
         }
-        return markers;
+
+        // UI state
+        const pct = (v.currentTime / duration) * 100;
+        const clampedPct = isFullRange
+            ? Math.min(Math.max(pct, 0), 100)
+            : Math.min(Math.max(pct, trimStartPct), trimEndPct);
+
+        setCurrentTime(v.currentTime);
+        setProgressPct(Number.isFinite(clampedPct) ? clampedPct : 0);
     };
 
-    const togglePlay = (e) => {
+    // Ensure any external seeks remain inside the range
+    const handleSeekAtClientX = (clientX) => {
+        const bar = barRef.current;
+        if (!bar || !duration) return;
+        const rect = bar.getBoundingClientRect();
+        let pct = ((clientX - rect.left) / rect.width) * 100;
+        pct = Math.min(Math.max(pct, 0), 100);
+        if (!isFullRange) pct = Math.min(Math.max(pct, trimStartPct), trimEndPct);
+
+        setProgressPct(pct);
+        videoRef.current.currentTime = (pct / 100) * duration;
+    };
+
+    const onBarClick = (e) => handleSeekAtClientX(e.clientX);
+
+    // Drag for playhead
+    const onThumbPointerDown = (e) => {
         e.preventDefault();
-        if (videoRef.current) {
-            if (isPlaying) {
-                videoRef.current.pause();
+        const move = (ev) => handleSeekAtClientX(ev.clientX);
+        const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
+
+    // Drag for trim handles
+    const makeTrimDrag = (which) => (e) => {
+        e.preventDefault();
+        const bar = barRef.current;
+        if (!bar) return;
+        const rect = bar.getBoundingClientRect();
+
+        const move = (ev) => {
+            const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+            if (which === "start") {
+                const next = Math.min(Math.max(pct, 0), trimEndPct - 1);
+                setTrimStartPct(next);
+                if (progressPct < next) handleSeekAtClientX(ev.clientX);
             } else {
-                videoRef.current.play();
+                const next = Math.max(Math.min(pct, 100), trimStartPct + 1);
+                setTrimEndPct(next);
+                if (progressPct > next) handleSeekAtClientX(ev.clientX);
             }
-            setIsPlaying(!isPlaying);
-        }
-    };
+        };
 
-    const handleVolumeChange = (value) => {
-        if (videoRef.current) {
-            const newVolume = value / 100;
-            videoRef.current.volume = newVolume;
-            setVolume(newVolume);
-            setIsMuted(newVolume === 0);
-        }
-    };
-
-    const handleTimeUpdate = () => {
-        if (videoRef.current) {
-            const progress =
-                (videoRef.current.currentTime / videoRef.current.duration) * 100;
-            setProgress(isFinite(progress) ? progress : 0);
-            setCurrentTime(videoRef.current.currentTime);
-            setDuration(videoRef.current.duration);
-        }
-    };
-
-    const handleProgressBarClick = (e) => {
-        const progressBar = e.currentTarget; // Get the progress bar element
-        const rect = progressBar.getBoundingClientRect(); // Get the dimensions of the progress bar
-        const clickX = e.clientX - rect.left; // Calculate the X position of the click relative to the progress bar
-        const progressBarWidth = rect.width; // Get the total width of the progress bar
-        const newProgress = (clickX / progressBarWidth) * 100; // Calculate the new progress percentage
-
-        // Ensure the new progress is within the trim range
-        const clampedProgress = Math.min(Math.max(newProgress, trimStart), trimEnd);
-        setProgress(clampedProgress);
-        videoRef.current.currentTime = (clampedProgress / 100) * duration;
-    };
-
-    const toggleMute = (e) => {
-        e.preventDefault(); // Prevent form submission
-        if (videoRef.current) {
-            videoRef.current.muted = !isMuted;
-            setIsMuted(!isMuted);
-            if (!isMuted) {
-                setVolume(0);
-            } else {
-                setVolume(1);
-                videoRef.current.volume = 1;
+        const up = () => {
+            // Emit trim once on release
+            if (onTrim && duration) {
+                const startTime = (trimStartPct / 100) * duration;
+                const endTime = (trimEndPct / 100) * duration;
+                onTrim({ startTime: Math.floor(startTime), endTime: Math.floor(endTime) });
             }
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+        };
+
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
+
+    // Keep playhead inside bounds when trims change
+    useEffect(() => {
+        const v = videoRef.current;
+        if (!v || !duration) return;
+        if (!isFullRange) {
+            if (v.currentTime < minTime) v.currentTime = minTime;
+            if (v.currentTime > maxTime) v.currentTime = minTime; // snap back inside
+        }
+    }, [trimStartPct, trimEndPct, minTime, maxTime, duration, isFullRange]);
+
+    // Loop on native "ended" event if trimmed
+    useEffect(() => {
+        const v = videoRef.current;
+        if (!v) return;
+
+        const onEnded = () => {
+            if (!duration || isFullRange) return;
+            v.currentTime = minTime;
+            v.play();
+        };
+
+        v.addEventListener("ended", onEnded);
+        return () => v.removeEventListener("ended", onEnded);
+    }, [duration, isFullRange, minTime]);
+
+    // Basic play/pause & volume controls
+    const togglePlay = () => {
+        const v = videoRef.current;
+        if (!v) return;
+        if (v.paused) v.play(); else v.pause();
+        setIsPlaying(!v.paused);
+    };
+
+    const toggleMute = () => {
+        const v = videoRef.current;
+        if (!v) return;
+        if (!isMuted) {
+            setPrevVolume(volume || 0.6);
+            v.muted = true;
+            setIsMuted(true);
+            setVolume(0);
+        } else {
+            v.muted = false;
+            setIsMuted(false);
+            v.volume = prevVolume;
+            setVolume(prevVolume);
         }
     };
 
-    const setSpeed = (speed, e) => {
-        e.preventDefault(); // Prevent form submission
-        if (videoRef.current) {
-            videoRef.current.playbackRate = speed;
-            setPlaybackSpeed(speed);
-        }
+    const onVolumeSlider = (valArr) => {
+        const v = videoRef.current;
+        if (!v) return;
+        const val = (valArr?.[0] ?? 0) / 100;
+        v.volume = val;
+        v.muted = val === 0;
+        setIsMuted(val === 0);
+        setVolume(val);
+        if (val > 0) setPrevVolume(val);
     };
 
-    const handleTrimStart = (e) => {
-        e.preventDefault(); // Prevent form submission
-        setTrimStart(progress);
-    };
+    // Time markers for the timeline
+    const timeMarkers = useMemo(() => {
+        const marks = [];
+        const d = Math.floor(duration) || 0;
+        if (!d) return marks;
+        const interval = d <= 10 ? 1 : d <= 60 ? 5 : d <= 600 ? 30 : 60;
+        for (let t = 0; t <= d; t += interval) marks.push(t);
+        return marks;
+    }, [duration]);
 
-    const handleTrimEnd = (e) => {
-        e.preventDefault(); // Prevent form submission
-        setTrimEnd(progress);
-    };
-
-    const applyTrim = () => {
-        if (!file || !videoRef.current) return;
-
-        const startTime = (trimStart / 100) * videoRef.current.duration;
-        const endTime = (trimEnd / 100) * videoRef.current.duration;
-
-        // Validate startTime and endTime
-        if (startTime < 0 || endTime > videoRef.current.duration || startTime >= endTime) {
-            console.error("Invalid trim range");
-            return;
-        }
-
-        // Pass the trim range to the parent component
-        onTrim({ startTime, endTime });
-        setIsTrimApplied(true); // Indicate that trim is applied
-    };
-
-    const bindTrimStart = useDrag(({ movement: [mx], memo = trimStart }) => {
-        const newTrimStart = Math.min(Math.max(memo + mx / 10, 0), trimEnd - 1);
-        setTrimStart(newTrimStart);
-        if (progress < newTrimStart) {
-            setProgress(newTrimStart);
-            videoRef.current.currentTime = (newTrimStart / 100) * duration;
-        }
-        applyTrim();
-        return memo;
-    });
-
-    const bindTrimEnd = useDrag(({ movement: [mx], memo = trimEnd }) => {
-        const newTrimEnd = Math.max(Math.min(memo + mx / 10, 100), trimStart + 1);
-        setTrimEnd(newTrimEnd);
-        if (progress > newTrimEnd) {
-            setProgress(newTrimEnd);
-            videoRef.current.currentTime = (newTrimEnd / 100) * duration;
-        }
-        applyTrim();
-        return memo;
-    });
-
-    const bindSliderThumb = useDrag(({ movement: [mx], memo = progress }) => {
-        const newProgress = Math.min(Math.max(memo + mx / 9.5, trimStart), trimEnd); // Match sensitivity with trim handles
-        setProgress(newProgress);
-        videoRef.current.currentTime = (newProgress / 100) * duration;
-        return memo;
-    });
+    const startLabel = fmt(minTime);
+    const endLabel = fmt(maxTime);
 
     return (
-        <div
-            className="relative w-full max-w-6xl mx-auto rounded-xl overflow-hidden bg-[#11111198] shadow-[0_0_20px_rgba(0,0,0,0.2)] backdrop-blur-sm"
-            onMouseEnter={() => setShowControls(true)}
-        >
-            {/* Video Preview Area */}
+        <div className="relative w-full max-w-6xl mx-auto rounded-xl overflow-hidden bg-[#11111198] shadow-[0_0_20px_rgba(0,0,0,0.2)] backdrop-blur-sm">
             <video
                 ref={videoRef}
-                preload="none"
                 className="w-full"
+                preload="metadata"
+                onLoadedMetadata={onLoadedMeta}
+                onTimeUpdate={onTimeUpdate}
                 onClick={togglePlay}
-                onTimeUpdate={handleTimeUpdate}
             >
-                <source src={URL.createObjectURL(file)} type="video/mp4" />
+                {objectUrl && <source src={objectUrl} type={file?.type || undefined} />}
             </video>
 
-            {/* Trim Tool Label */}
-            {isTrimming && (
-                <div className="absolute top-4 left-4 bg-primary/90 text-background px-3 py-1 font-medium rounded-md text-sm">
-                    Trim Mode
-                </div>
-            )}
+            {/* Controls */}
+            <div className="absolute bottom-0 left-0 right-0 p-4 m-2 bg-[#11111198] backdrop-blur-md rounded-2xl">
+                {/* Timeline */}
+                <div className="mb-2">
+                    <div
+                        ref={barRef}
+                        className="relative h-2 bg-gray-600 rounded-full cursor-pointer"
+                        onClick={onBarClick}
+                        aria-label="Seek bar"
+                    >
+                        {/* left grey */}
+                        <div className="absolute top-0 h-full bg-gray-400 rounded-full" style={{ left: "0%", width: `${trimStartPct}%` }} />
+                        {/* active (white) */}
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <div className="absolute top-0 h-full bg-white" style={{ left: `${trimStartPct}%`, width: `${trimEndPct - trimStartPct}%` }} />
+                            </TooltipTrigger>
+                            <TooltipContent>Trim: {startLabel} → {endLabel}</TooltipContent>
+                        </Tooltip>
+                        {/* right grey */}
+                        <div className="absolute top-0 h-full bg-gray-400 rounded-full" style={{ left: `${trimEndPct}%`, width: `${100 - trimEndPct}%` }} />
 
-            {showControls && (
-                <div className="absolute bottom-0 mx-auto max-w-4xl left-0 right-0 p-4 m-2 bg-[#11111198] backdrop-blur-md rounded-2xl">
-                    {/* Timeline/Seek Bar with Trim Handles */}
-                    <div className="flex items-center gap-2 mb-2 mt-4">
-                        <div className="relative flex-1 h-2 bg-gray-600 rounded-full">
-                            {/* Grey Area (Non-Trimmed) */}
-                            <div
-                                className="absolute top-0 h-full bg-gray-400 rounded-full"
-                                style={{
-                                    left: "0%",
-                                    width: `${trimStart}%`,
-                                }}
-                            />
-                            {/* White Area (Trimmed) */}
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <div
-                                        className="absolute top-0 h-full bg-white"
-                                        style={{
-                                            left: `${trimStart}%`,
-                                            width: `${trimEnd - trimStart}%`,
-                                        }}
-                                    />
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    Trimmed Area: {formatTime((trimStart / 100) * duration)} to {formatTime((trimEnd / 100) * duration)}
-                                </TooltipContent>
-                            </Tooltip>
-                            {/* Grey Area (Non-Trimmed) */}
-                            <div
-                                className="relative flex-1 h-2 bg-gray-600 rounded-full cursor-pointer"
-                                onClick={handleProgressBarClick} // Add click handler
-                            >
-                                {/* Grey Area (Non-Trimmed) */}
-                                <div
-                                    className="absolute top-0 h-full bg-gray-400 rounded-full"
-                                    style={{
-                                        left: "0%",
-                                        width: `${trimStart}%`,
-                                    }}
-                                />
-                                {/* White Area (Trimmed) */}
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <div
-                                            className="absolute top-0 h-full bg-white"
-                                            style={{
-                                                left: `${trimStart}%`,
-                                                width: `${trimEnd - trimStart}%`,
-                                            }}
-                                        />
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        Trimmed Area: {formatTime((trimStart / 100) * duration)} to {formatTime((trimEnd / 100) * duration)}
-                                    </TooltipContent>
-                                </Tooltip>
-                                {/* Grey Area (Non-Trimmed) */}
-                                <div
-                                    className="absolute top-0 h-full bg-gray-400 rounded-full"
-                                    style={{
-                                        left: `${trimEnd}%`,
-                                        width: `${100 - trimEnd}%`,
-                                    }}
-                                />
-                                {/* Slider Thumb */}
-                                <div
-                                    {...bindSliderThumb()}
-                                    className="absolute top-[-550%] h-full bg-transparent"
-                                    style={{
-                                        left: `${progress}%`,
-                                        transform: "translateX(-50%)",
-                                    }}>
-                                    <div className="relative flex flex-col items-center">
-                                        <div className="mb-1 text-xs text-white bg-black rounded px-2 py-1">
-                                            {formatTime((progress / 100) * duration)}
-                                        </div>
-                                        <div className="h-6 w-1 bg-white rounded-full" />
-                                    </div>
-                                </div>
-                                {/* Trim Start Handle */}
-                                <div
-                                    {...bindTrimStart()}
-                                    className="absolute top-[-80%] h-5 w-2 bg-white rounded-[10px] cursor-pointer"
-                                    style={{
-                                        left: `${trimStart}%`,
-                                        transform: "translateX(-125%)",
-                                    }}>
-                                    <div className="absolute h-4 w-[2.5px] bg-gray-600 top-[10%] cursor-pointer" style={{ left: `35%` }} />
-                                </div>
-                                {/* Trim End Handle */}
-                                <div
-                                    {...bindTrimEnd()}
-                                    className="absolute top-[-80%] h-5 w-2 bg-white rounded-[10px] cursor-pointer"
-                                    style={{
-                                        left: `${trimEnd}%`,
-                                        transform: "translateX(30%)",
-                                    }}>
-                                    <div className="absolute h-4 w-[2px] bg-gray-600 top-[10%] cursor-pointer" style={{ left: `35%` }} />
-                                </div>
-                            </div>
-                        </div>
+                        {/* Playhead (draggable) */}
+                        <div
+                            role="slider"
+                            aria-label="Current position"
+                            aria-valuemin={Math.floor(trimStartPct)}
+                            aria-valuemax={Math.floor(trimEndPct)}
+                            aria-valuenow={Math.floor(progressPct)}
+                            tabIndex={0}
+                            onPointerDown={onThumbPointerDown}
+                            className="absolute -top-3 h-8 w-1 bg-white rounded-full"
+                            style={{ left: `${progressPct}%`, transform: "translateX(-50%)" }}
+                        />
+
+                        {/* Trim handles */}
+                        <div
+                            role="slider"
+                            aria-label="Trim start"
+                            aria-valuemin={0}
+                            aria-valuemax={Math.floor(trimEndPct - 1)}
+                            aria-valuenow={Math.floor(trimStartPct)}
+                            tabIndex={0}
+                            onPointerDown={makeTrimDrag("start")}
+                            className="absolute -top-1.5 h-5 w-2 bg-white rounded cursor-ew-resize"
+                            style={{ left: `${trimStartPct}%`, transform: "translateX(-125%)" }}
+                        />
+                        <div
+                            role="slider"
+                            aria-label="Trim end"
+                            aria-valuemin={Math.floor(trimStartPct + 1)}
+                            aria-valuemax={100}
+                            aria-valuenow={Math.floor(trimEndPct)}
+                            tabIndex={0}
+                            onPointerDown={makeTrimDrag("end")}
+                            className="absolute -top-1.5 h-5 w-2 bg-white rounded cursor-ew-resize"
+                            style={{ left: `${trimEndPct}%`, transform: "translateX(30%)" }}
+                        />
                     </div>
 
-                    {/* Time Markers */}
-                    <div className="flex justify-between text-xs text-white mt-1 select-none">
-                        {generateTimeMarkers(duration).map((time, index) => (
-                            <span
-                                key={index}
-                                style={{ left: `${(time / duration) * 100}%` }}>
-                                {formatTime(time)}
-                            </span>
-                        ))}
-                    </div>
-
-                    {/* Trim Time Display */}
-                    {isTrimming && (
-                        <div className="flex justify-between text-sm text-white mb-2">
-                            <span>Start: {formatTime((trimStart / 100) * duration)}</span>
-                            <span>End: {formatTime((trimEnd / 100) * duration)}</span>
-                        </div>
-                    )}
-
-                    {/* Playback Controls */}
-                    <div className="flex items-center justify-between">
-                        {/* Play Button and Volume Control */}
-                        <div className="flex items-center gap-4">
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <Button
-                                        onClick={togglePlay}
-                                        variant="ghost"
-                                        size="icon"
-                                        className="text-white hover:bg-[#111111d1] hover:text-white"
-                                    >
-                                        {isPlaying ? (
-                                            <Pause className="h-5 w-5" />
-                                        ) : (
-                                            <Play className="h-5 w-5" />
-                                        )}
-                                    </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>Play/Pause</TooltipContent>
-                            </Tooltip>
-
-                            <div className="flex items-center gap-x-1">
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            onClick={toggleMute}
-                                            variant="ghost"
-                                            size="icon"
-                                            className="text-white hover:bg-[#111111d1] hover:text-white"
-                                        >
-                                            {isMuted ? (
-                                                <VolumeX className="h-5 w-5" />
-                                            ) : volume > 0.5 ? (
-                                                <Volume2 className="h-5 w-5" />
-                                            ) : (
-                                                <Volume1 className="h-5 w-5" />
-                                            )}
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>Mute/Unmute</TooltipContent>
-                                </Tooltip>
-
-                                <Slider
-                                    value={[volume * 100]}
-                                    onValueChange={(value) => handleVolumeChange(value[0])}
-                                    className="w-24"
-                                />
-                            </div>
-                        </div>
-
-                        {/* Trim Controls */}
-                        <div className="flex items-center gap-2">
-                            {isTrimming ? (
-                                <>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                onClick={handleTrimStart}
-                                                variant="ghost"
-                                                size="icon"
-                                                className="text-white hover:bg-[#111111d1] hover:text-white"
-                                            >
-                                                <Scissors className="h-5 w-5" />
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>Set Start Time</TooltipContent>
-                                    </Tooltip>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                onClick={handleTrimEnd}
-                                                variant="ghost"
-                                                size="icon"
-                                                className="text-white hover:bg-[#111111d1] hover:text-white"
-                                            >
-                                                <Scissors className="h-5 w-5" />
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>Set End Time</TooltipContent>
-                                    </Tooltip>
-                                </>
-                            ) : (
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            onClick={(e) => {
-                                                e.preventDefault();
-                                                setIsTrimming(true);
-                                            }}
-                                            variant="ghost"
-                                            size="icon"
-                                            className="text-white hover:bg-[#111111d1] hover:text-white"
-                                        >
-                                            <Scissors className="h-5 w-5" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>Trim Video</TooltipContent>
-                                </Tooltip>
-                            )}
-
-                            {/* Playback Speed Controls */}
-                            {[0.5, 1, 1.5, 2].map((speed) => (
-                                <Tooltip key={speed}>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            onClick={(e) => setSpeed(speed, e)}
-                                            variant="ghost"
-                                            size="icon"
-                                            className={cn(
-                                                "text-white hover:bg-[#111111d1] hover:text-white",
-                                                playbackSpeed === speed && "bg-[#111111d1]"
-                                            )}
-                                        >
-                                            {speed}x
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>Playback Speed: {speed}x</TooltipContent>
-                                </Tooltip>
+                    {/* Markers */}
+                    <div className="relative mt-1 text-xs text-white select-none">
+                        <div className="relative h-4">
+                            {timeMarkers.map((t) => (
+                                <span key={t} className="absolute -translate-x-1/2" style={{ left: `${(t / (duration || 1)) * 100}%` }}>
+                                    {fmt(t)}
+                                </span>
                             ))}
                         </div>
                     </div>
+
+                    {/* Trim labels when active */}
+                    {isTrimming && (
+                        <div className="flex justify-between text-sm text-white mt-1">
+                            <span>Start: {startLabel}</span>
+                            <span>End: {endLabel}</span>
+                        </div>
+                    )}
                 </div>
-            )}
+
+                {/* Bottom row */}
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <Tooltip><TooltipTrigger asChild>
+                            <Button type="button" onClick={togglePlay} variant="ghost" size="icon" className="text-white hover:bg-[#111111d1]">
+                                {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                            </Button>
+                        </TooltipTrigger><TooltipContent>Play/Pause</TooltipContent></Tooltip>
+
+                        <div className="flex items-center gap-2">
+                            <Tooltip><TooltipTrigger asChild>
+                                <Button type="button" onClick={toggleMute} variant="ghost" size="icon" className="text-white hover:bg-[#111111d1]">
+                                    {isMuted ? <VolumeX className="h-5 w-5" /> : volume > 0.5 ? <Volume2 className="h-5 w-5" /> : <Volume1 className="h-5 w-5" />}
+                                </Button>
+                            </TooltipTrigger><TooltipContent>Mute/Unmute</TooltipContent></Tooltip>
+
+                            <Slider value={[volume * 100]} onValueChange={onVolumeSlider} className="w-28" />
+                        </div>
+
+                        <span className="text-xs text-white/90 ml-2">{fmt(currentTime)} / {fmt(duration)}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        {!isTrimming ? (
+                            <Tooltip><TooltipTrigger asChild>
+                                <Button type="button" onClick={() => setIsTrimming(true)} variant="ghost" size="icon" className="text-white hover:bg-[#111111d1]">
+                                    <Scissors className="h-5 w-5" />
+                                </Button>
+                            </TooltipTrigger><TooltipContent>Trim Video</TooltipContent></Tooltip>
+                        ) : (
+                            <>
+                                <Tooltip><TooltipTrigger asChild>
+                                    <Button type="button" onClick={() => setTrimStartPct(progressPct)} variant="ghost" size="icon" className="text-white hover:bg-[#111111d1]">
+                                        <Scissors className="h-5 w-5" />
+                                    </Button>
+                                </TooltipTrigger><TooltipContent>Set Start</TooltipContent></Tooltip>
+                                <Tooltip><TooltipTrigger asChild>
+                                    <Button type="button" onClick={() => setTrimEndPct(progressPct)} variant="ghost" size="icon" className="text-white hover:bg-[#111111d1]">
+                                        <Scissors className="h-5 w-5" />
+                                    </Button>
+                                </TooltipTrigger><TooltipContent>Set End</TooltipContent></Tooltip>
+                            </>
+                        )}
+                    </div>
+                </div>
+            </div>
         </div>
     );
-};
-
-export default VideoTrimmer;
+}

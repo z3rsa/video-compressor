@@ -2,97 +2,183 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
+/** Ensure Node runtime (fs) and avoid static caching */
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 const tempDir = path.join(process.cwd(), 'temp');
 
-// Mapping of file extensions to MIME types
 const mimeTypes = {
     mp4: 'video/mp4',
+    webm: 'video/webm',
     mkv: 'video/x-matroska',
     avi: 'video/x-msvideo',
     mov: 'video/quicktime',
-    // Add more MIME types as needed
+    m4v: 'video/x-m4v',
+    wmv: 'video/x-ms-wmv',
+    flv: 'video/x-flv',
+    ogg: 'video/ogg',
 };
 
-export async function GET(request, { params }) {
-    try {
-        const { filename } = await params;
-        const { searchParams } = new URL(request.url);
-        const download = searchParams.get('download') === 'true'; // Check if download query param is true
+function getContentType(filename) {
+    const ext = path.extname(filename).slice(1).toLowerCase();
+    return mimeTypes[ext] || 'application/octet-stream';
+}
 
+/** RFC5987 filename* encoding for UTF-8 safe download headers */
+function encodeRFC5987(value) {
+    return encodeURIComponent(value)
+        .replace(/['()]/g, escape) // i.e., %27 %28 %29
+        .replace(/\*/g, '%2A');
+}
+
+/** Common headers for all responses */
+function baseHeaders({ contentType, length, etag, lastModified }) {
+    const h = new Headers();
+    if (length != null) h.set('Content-Length', String(length));
+    if (contentType) h.set('Content-Type', contentType);
+    h.set('Accept-Ranges', 'bytes');
+    h.set('Cache-Control', 'no-store');
+    if (etag) h.set('ETag', etag);
+    if (lastModified) h.set('Last-Modified', lastModified);
+    h.set('X-Content-Type-Options', 'nosniff');
+    return h;
+}
+
+/** Resolve file path safely and stats */
+function resolveFile(filename) {
+    const sanitized = path.basename(filename);
+    const filePath = path.join(tempDir, sanitized);
+    if (!fs.existsSync(filePath)) return { ok: false };
+    const stats = fs.statSync(filePath);
+    return { ok: true, sanitized, filePath, stats };
+}
+
+/** HEAD handler (players/clients probe headers) */
+export async function HEAD(request, { params }) {
+    try {
+        const { filename } = params || {};
         if (!filename) {
             return NextResponse.json({ message: 'Filename is required' }, { status: 400 });
         }
 
-        // Sanitize filename to prevent path traversal
-        const sanitizedFilename = path.basename(filename);
-        const filePath = path.join(tempDir, sanitizedFilename);
-
-        if (!fs.existsSync(filePath)) {
+        const resolved = resolveFile(filename);
+        if (!resolved.ok) {
             return NextResponse.json({ message: 'File not found' }, { status: 404 });
         }
 
-        // Get file stats to determine the file size
-        const stats = fs.statSync(filePath);
-        const fileSize = stats.size;
+        const { sanitized, filePath, stats } = resolved;
+        const contentType = getContentType(sanitized);
+        const etag = `W/"${stats.mtimeMs}-${stats.size}"`;
+        const lastModified = stats.mtime.toUTCString();
 
-        // Determine the MIME type based on the file extension
-        const ext = path.extname(sanitizedFilename).slice(1); // Get file extension without the dot
-        const contentType = mimeTypes[ext] || 'application/octet-stream'; // Default to octet-stream if unknown
+        const headers = baseHeaders({
+            contentType,
+            length: stats.size,
+            etag,
+            lastModified,
+        });
 
-        // If download is requested, force the browser to download the file
-        if (download) {
-            return new NextResponse(fs.createReadStream(filePath), {
-                headers: {
-                    'Content-Disposition': `attachment; filename="${sanitizedFilename}"`,
-                    'Content-Length': fileSize.toString(),
-                    'Content-Type': contentType,
-                },
-            });
+        return new NextResponse(null, { status: 200, headers });
+    } catch (err) {
+        console.error('Download HEAD error:', err);
+        return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
+    }
+}
+
+export async function GET(request, { params }) {
+    try {
+        const { filename } = params || {};
+        if (!filename) {
+            return NextResponse.json({ message: 'Filename is required' }, { status: 400 });
         }
 
-        // Otherwise, handle range requests for streaming
+        const url = new URL(request.url);
+        const forceDownload = url.searchParams.get('download') === 'true';
+
+        const resolved = resolveFile(filename);
+        if (!resolved.ok) {
+            return NextResponse.json({ message: 'File not found' }, { status: 404 });
+        }
+
+        const { sanitized, filePath, stats } = resolved;
+        if (stats.size === 0) {
+            return NextResponse.json({ message: 'File is empty' }, { status: 500 });
+        }
+
+        const contentType = getContentType(sanitized);
+        const etag = `W/"${stats.mtimeMs}-${stats.size}"`;
+        const lastModified = stats.mtime.toUTCString();
+
+        // If download, force Content-Disposition: attachment; include RFC5987 filename*
+        if (forceDownload) {
+            const headers = baseHeaders({
+                contentType,
+                length: stats.size,
+                etag,
+                lastModified,
+            });
+            const asciiFallback = sanitized.replace(/[^\x20-\x7E]/g, '_');
+            const encodedStar = encodeRFC5987(sanitized);
+
+            headers.set(
+                'Content-Disposition',
+                `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodedStar}`
+            );
+
+            const stream = fs.createReadStream(filePath);
+            return new NextResponse(stream, { status: 200, headers });
+        }
+
+        // Handle range (streaming)
         const range = request.headers.get('range');
         if (range) {
-            // Parse the range header (e.g., "bytes=0-500")
-            const parts = range.replace(/bytes=/, '').split('-');
-            const start = parseInt(parts[0], 10);
-            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-
-            // Validate the range
-            if (start >= fileSize || end >= fileSize) {
-                return new NextResponse(null, {
-                    status: 416, // Range Not Satisfiable
-                    headers: {
-                        'Content-Range': `bytes */${fileSize}`,
-                    },
-                });
+            // Robust bytes parsing: "bytes=start-end"
+            const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+            if (!match) {
+                const h = new Headers();
+                h.set('Content-Range', `bytes */${stats.size}`);
+                return new NextResponse(null, { status: 416, headers: h });
             }
 
-            // Create a read stream for the requested range
-            const chunkSize = end - start + 1;
-            const fileStream = fs.createReadStream(filePath, { start, end });
+            let start = match[1] ? parseInt(match[1], 10) : 0;
+            let end = match[2] ? parseInt(match[2], 10) : stats.size - 1;
 
-            // Respond with the partial content
-            return new NextResponse(fileStream, {
-                status: 206, // Partial Content
-                headers: {
-                    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                    'Accept-Ranges': 'bytes',
-                    'Content-Length': chunkSize.toString(),
-                    'Content-Type': contentType,
-                },
+            if (Number.isNaN(start) || start < 0) start = 0;
+            if (Number.isNaN(end) || end >= stats.size) end = stats.size - 1;
+            if (start > end || start >= stats.size) {
+                const h = new Headers();
+                h.set('Content-Range', `bytes */${stats.size}`);
+                return new NextResponse(null, { status: 416, headers: h });
+            }
+
+            const chunkSize = end - start + 1;
+            const stream = fs.createReadStream(filePath, { start, end });
+
+            const headers = baseHeaders({
+                contentType,
+                length: chunkSize,
+                etag,
+                lastModified,
             });
-        } else {
-            // If no range header, serve the entire file
-            const fileStream = fs.createReadStream(filePath);
-            return new NextResponse(fileStream, {
-                headers: {
-                    'Content-Length': fileSize.toString(),
-                    'Content-Type': contentType,
-                    'Accept-Ranges': 'bytes',
-                },
+            headers.set('Content-Range', `bytes ${start}-${end}/${stats.size}`);
+
+            return new NextResponse(stream, {
+                status: 206,
+                headers,
             });
         }
+
+        // No range: stream full file inline
+        const headers = baseHeaders({
+            contentType,
+            length: stats.size,
+            etag,
+            lastModified,
+        });
+
+        const stream = fs.createReadStream(filePath);
+        return new NextResponse(stream, { status: 200, headers });
     } catch (error) {
         console.error('Download error:', error);
         return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
