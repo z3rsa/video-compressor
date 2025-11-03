@@ -1,59 +1,43 @@
 FROM node:20-bullseye AS base
 
-# ---- Common system deps for ALL stages (Debian) ----
-# (Keep this in base so deps/builder/runner inherit the same environment)
+# System deps (Debian)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg python3 python3-venv python3-pip ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
-# ---- rembg (Python venv) available to all stages ----
+# rembg (CPU) in a small venv
 RUN python3 -m venv /opt/pyenv \
  && /opt/pyenv/bin/pip install --no-cache-dir --upgrade pip \
  && /opt/pyenv/bin/pip install --no-cache-dir "rembg[cpu,cli]"
 
-# rembg on PATH and cache dir preset
+# Make rembg visible and set model cache dir
 ENV PATH="/opt/pyenv/bin:${PATH}" \
     REMBG_BIN=rembg \
     REMBG_DRIVER=local \
     U2NET_HOME=/data/u2net
 
-# Ensure model cache dir exists (can also be a mounted volume at runtime)
 RUN mkdir -p /data/u2net
 
-# ==========================
-# Install dependencies only when needed
-# ==========================
-FROM base AS deps
-WORKDIR /app  # <-- IMPORTANT: ensure node_modules goes under /app
-
-# Copy lockfiles and install deps with your chosen package manager
-COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* .npmrc* ./
-RUN \
-    if [ -f yarn.lock ]; then yarn --frozen-lockfile; \
-    elif [ -f package-lock.json ]; then npm ci; \
-    elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm i --frozen-lockfile; \
-    else echo "Lockfile not found." && exit 1; \
-    fi
-
-# ==========================
-# Rebuild the source code only when needed
-# ==========================
+############################
+# Build
+############################
 FROM base AS builder
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+
+# Install dependencies (npm only for reliability in CI)
+# If you need yarn/pnpm, tell me which one and I'll adapt.
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Copy source and build
 COPY . .
+# If you want to disable Next telemetry at build time:
+# ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
 
-# Build (Next.js)
-RUN \
-    if [ -f yarn.lock ]; then yarn run build; \
-    elif [ -f package-lock.json ]; then npm run build; \
-    elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm run build; \
-    else echo "Lockfile not found." && exit 1; \
-    fi
-
-# ==========================
-# Production image, copy all the files and run next
-# ==========================
+############################
+# Runtime
+############################
 FROM base AS runner
 WORKDIR /app
 
@@ -73,7 +57,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 LABEL org.opencontainers.image.source https://github.com/z3rsa/video-compressor
 
-RUN apt get-update
+RUN apt-get update
 
 # Create the /app/temp directory and set proper ownership
 RUN mkdir -p /app/temp && chown nextjs:nodejs /app/temp
