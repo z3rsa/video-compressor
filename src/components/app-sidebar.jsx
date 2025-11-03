@@ -1,6 +1,8 @@
-"use client"
+"use client";
 
 import * as React from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Sidebar,
   SidebarContent,
@@ -12,64 +14,45 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { CircleHelp, FileVideo, Github, History, Home, Info, Upload, Zap } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
-import { usePathname } from "next/navigation";
 import { ToggleTheme } from "@/components/theme-toggle";
+import {
+  CircleHelp,
+  FileVideo,
+  Github,
+  History,
+  Home,
+  Info,
+  Upload,
+  Zap,
+  ImageMinus,
+} from "lucide-react";
 
-// This is sample data.
 const data = [
   {
     title: "Main",
     items: [
-      {
-        title: "Dashboard",
-        url: "/",
-        icon: Home,
-      },
-      {
-        title: "Upload & Compress",
-        url: "/upload",
-        icon: Upload,
-      },
-      {
-        title: "Video Library",
-        url: "/library",
-        icon: FileVideo,
-      },
+      { title: "Dashboard", url: "/", icon: Home },
+      { title: "Upload & Compress", url: "/upload", icon: Upload },
+      { title: "Video Library", url: "/library", icon: FileVideo },
     ],
   },
   {
     title: "Tools",
     items: [
-      {
-        title: "Batch Processing",
-        url: "/batch",
-        icon: Zap,
-      },
-      {
-        title: "Download History",
-        url: "/history",
-        icon: History,
-      },
+      { title: "Batch Processing", url: "/batch", icon: Zap },
+      { title: "Remove Background", url: "/remove-bg", icon: ImageMinus },
+      { title: "Download History", url: "/history", icon: History },
     ],
   },
   {
     title: "Help & Resources",
     items: [
-      {
-        title: "About",
-        url: "/about",
-        icon: Info,
-      },
-      {
-        title: "Documentation",
-        url: "/docs",
-        icon: CircleHelp,
-      },
+      { title: "About", url: "/about", icon: Info },
+      { title: "Documentation", url: "/docs", icon: CircleHelp },
       {
         title: "GitHub Repository",
-        url: "https://github.com/z3rsa/video-compressor",
+        url: "https://github.com/z3rsa/z3rtools", // updated name
         icon: Github,
         external: true,
       },
@@ -77,12 +60,9 @@ const data = [
   },
 ];
 
-export function AppSidebar({ ...props }) {
+export function AppSidebar(props) {
   const pathname = usePathname();
-
-  const isActive = (url) => {
-    return pathname === url || (url !== "/" && pathname.startsWith(url));
-  };
+  const isActive = (url) => pathname === url || (url !== "/" && pathname.startsWith(url));
 
   return (
     <Sidebar {...props}>
@@ -90,22 +70,21 @@ export function AppSidebar({ ...props }) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <a href="/" className="flex items-center">
+              <Link href="/" className="flex items-center">
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground mr-2">
                   <FileVideo className="size-4" />
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">
-                  <span className="text-lg font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">Video Compressor</span>
+                  <span className="text-lg font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">Z3RTools</span>
                   <span className="text-xs text-muted-foreground">v1.0.0</span>
                 </div>
-              </a>
+              </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       <Separator className="my-4" />
       <SidebarContent>
-        {/* Iterate over the `data` array directly */}
         {data.map((section) => (
           <SidebarGroup key={section.title}>
             <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
@@ -113,13 +92,21 @@ export function AppSidebar({ ...props }) {
               <SidebarMenu>
                 {section.items.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                      <a href={item.url}>
-                        {item.icon && <item.icon className="mr-2 h-4 w-4" />}
-                        {item.title}
-                      </a>
-                    </SidebarMenuButton>
-
+                    {item.external ? (
+                      <SidebarMenuButton asChild>
+                        <a href={item.url} target="_blank" rel="noopener noreferrer">
+                          {item.icon && <item.icon className="mr-2 h-4 w-4" />}
+                          {item.title}
+                        </a>
+                      </SidebarMenuButton>
+                    ) : (
+                      <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                        <Link href={item.url}>
+                          {item.icon && <item.icon className="mr-2 h-4 w-4" />}
+                          {item.title}
+                        </Link>
+                      </SidebarMenuButton>
+                    )}
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>

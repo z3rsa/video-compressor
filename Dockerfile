@@ -1,12 +1,29 @@
 # syntax=docker.io/docker/dockerfile:1
 
-FROM node:18-alpine AS base
+FROM node:20-bullseye AS base
 
 # Install dependencies only when needed
 FROM base AS deps
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
-RUN apk add --no-cache libc6-compat
-WORKDIR /app
+
+# Install ffmpeg + python + pip + venv
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg python3 python3-venv python3-pip ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---- Create Python venv & install rembg ----
+RUN python3 -m venv /opt/pyenv \
+ && /opt/pyenv/bin/pip install --no-cache-dir --upgrade pip \
+ && /opt/pyenv/bin/pip install --no-cache-dir "rembg[cpu,cli]"
+
+# Add rembg CLI to PATH and set persistent cache/env vars
+ENV PATH="/opt/pyenv/bin:${PATH}" \
+    REMBG_BIN=rembg \
+    REMBG_DRIVER=local \
+    U2NET_HOME=/data/u2net
+
+# Ensure cache dir exists (models downloaded here on first run)
+RUN mkdir -p /data/u2net
 
 # Install dependencies based on the preferred package manager
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* .npmrc* ./
@@ -61,9 +78,10 @@ RUN apk update && apk add ffmpeg
 # Create the /app/temp directory and set proper ownership
 RUN mkdir -p /app/temp && chown nextjs:nodejs /app/temp
 RUN mkdir -p /app/input && chown nextjs:nodejs /app/input
+RUN mkdir -p /data/u2net && chown nextjs:nodejs /data/u2net
 
 # Ensure the directories are writable
-RUN chmod -R 777 /app/temp /app/input
+RUN chmod -R 777 /app/temp /app/input /data/u2net
 
 USER nextjs
 

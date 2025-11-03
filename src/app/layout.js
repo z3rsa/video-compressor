@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "Video Compressor",
-  description: "Compress your videos",
+  title: "Z3RTools",
+  description: "Local media tools: compress, trim, remove background",
 };
 
 export default function RootLayout({ children }) {
