@@ -6,59 +6,43 @@ import path from "path";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Use a predictable, writable models dir (mounted in Docker: /data/u2net)
+// Use the working rembg binary *only*
+const REMBG = (process.env.REMBG_BIN || "rembg").trim();
+// Where models are cached (make sure this is writable in Docker)
 const MODELS_DIR = process.env.U2NET_HOME || path.join(os.homedir(), ".u2net");
 
-// Prefer explicit REMBG_BIN (e.g., "rembg"), then fallbacks.
-// In Docker we set REMBG_BIN=rembg and PATH includes /opt/pyenv/bin.
-function candidateCommands() {
-    const list = [];
-    if (process.env.REMBG_BIN && process.env.REMBG_BIN.trim()) {
-        list.push({ label: "REMBG_BIN", cmd: process.env.REMBG_BIN.trim(), shell: true });
-    }
-    list.push({ label: "rembg", cmd: "rembg", shell: false });
-    if (process.platform === "win32") {
-        list.push({ label: "py -m rembg.cli", cmd: "py -m rembg.cli", shell: true });
-        list.push({ label: "python -m rembg.cli", cmd: "python -m rembg.cli", shell: true });
-    } else {
-        list.push({ label: "python3 -m rembg.cli", cmd: "python3 -m rembg.cli", shell: true });
-        list.push({ label: "python -m rembg.cli", cmd: "python -m rembg.cli", shell: true });
-    }
-    return list;
-}
+// Run rembg with bytes on stdin and PNG on stdout
+async function runRembgDirect(args, inputBuffer) {
+    return await new Promise((resolve) => {
+        const child = spawn(REMBG, args, {
+            stdio: ["pipe", "pipe", "pipe"],
+            shell: false, // IMPORTANT: call the binary directly
+            env: { ...process.env, U2NET_HOME: MODELS_DIR },
+        });
 
-async function runRembg(args, inputBuffer) {
-    const tries = candidateCommands();
-    let lastErr = null;
-    const tried = [];
+        const out = [];
+        const err = [];
+        child.stdout.on("data", (d) => out.push(d));
+        child.stderr.on("data", (d) => err.push(d));
 
-    for (const c of tries) {
-        tried.push(c.label);
-        try {
-            const child = spawn(c.cmd, args, {
-                stdio: ["pipe", "pipe", "pipe"],
-                shell: c.shell,
-                env: { ...process.env, U2NET_HOME: MODELS_DIR },
-            });
-            if (inputBuffer) {
-                child.stdin.write(inputBuffer);
-                child.stdin.end();
+        child.on("error", (e) => {
+            resolve({ ok: false, error: new Error(`spawn error: ${e.message}`) });
+        });
+
+        child.on("close", (code) => {
+            if (code === 0) {
+                resolve({ ok: true, buffer: Buffer.concat(out) });
+            } else {
+                resolve({
+                    ok: false,
+                    error: new Error(Buffer.concat(err).toString() || `exit ${code}`),
+                });
             }
-            const outChunks = [];
-            const errChunks = [];
-            child.stdout.on("data", d => outChunks.push(d));
-            child.stderr.on("data", d => errChunks.push(d));
-            const code = await new Promise(res => child.on("close", res));
-            if (code === 0) return { ok: true, buffer: Buffer.concat(outChunks) };
-            lastErr = new Error(Buffer.concat(errChunks).toString() || `exit ${code}`);
-        } catch (e) {
-            lastErr = e;
-        }
-    }
-    return {
-        ok: false,
-        error: new Error(`${lastErr?.message || lastErr} (Tried: ${tried.join(" | ")})`),
-    };
+        });
+
+        child.stdin.write(inputBuffer);
+        child.stdin.end();
+    });
 }
 
 export async function POST(req) {
@@ -66,11 +50,14 @@ export async function POST(req) {
         const form = await req.formData();
         const file = form.get("file");
         if (!file) {
-            return NextResponse.json({ message: "Please attach an image file (field: file)." }, { status: 400 });
+            return NextResponse.json(
+                { message: "Please attach an image file (field: file)." },
+                { status: 400 }
+            );
         }
 
-        // Optional params coming from your page
-        const model = (form.get("model") || "auto").toString().trim();   // "auto" means don't pass -m
+        // Options from UI (keep defaults simple)
+        const model = (form.get("model") || "auto").toString().trim(); // "auto" means don't pass -m
         const returnMask = (form.get("returnMask") || "").toString() === "true";
         const alphaMatting = (form.get("alphaMatting") || "").toString() === "true";
 
@@ -83,9 +70,12 @@ export async function POST(req) {
         if (alphaMatting) args.push("-a");
         args.push("-", "-");
 
-        const res = await runRembg(args, inputBuffer);
+        const res = await runRembgDirect(args, inputBuffer);
         if (!res.ok) {
-            return NextResponse.json({ message: `rembg failed: ${res.error.message}` }, { status: 500 });
+            return NextResponse.json(
+                { message: `rembg failed: ${res.error.message}` },
+                { status: 500 }
+            );
         }
 
         return new NextResponse(res.buffer, {
