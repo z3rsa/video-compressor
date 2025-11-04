@@ -6,51 +6,40 @@ import path from "path";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-    // Use env vars set in Docker
-    const rembgBin = (process.env.REMBG_BIN || "rembg").trim();
-    const modelsDir = process.env.U2NET_HOME || path.join(os.homedir(), ".u2net");
+// 1x1 transparent PNG
+const TINY = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA" +
+    "AAC0lEQVR42mP8z8AABQMBgZp6f1kAAAAASUVORK5CYII=", "base64"
+);
 
+export async function GET() {
+    const py = process.env.PYTHON_BIN || "/opt/pyenv/bin/python";
+    const helper = process.env.REMBG_HELPER || "/opt/pyenv/bin/rembg_pipe.py";
+    const modelsDir = process.env.U2NET_HOME || path.join(os.homedir(), ".u2net");
     try {
-        const result = spawnSync(rembgBin, ["--version"], {
+        const res = spawnSync(py, [helper], {
             shell: false,
             env: { ...process.env, U2NET_HOME: modelsDir },
-            encoding: "utf8",
+            input: TINY,
+            encoding: "binary",
+            timeout: 15000,
+            maxBuffer: 10 * 1024 * 1024,
         });
-
-        if (result.error) {
-            return NextResponse.json(
-                {
-                    ok: false,
-                    message: `Failed to spawn rembg: ${result.error.message}`,
-                    modelsDir,
-                },
-                { status: 500 }
-            );
+        if (res.error) {
+            return NextResponse.json({ ok: false, step: "spawn", message: res.error.message, modelsDir }, { status: 500 });
         }
-
-        if (result.status === 0) {
+        const ok = res.status === 0 && res.stdout && res.stdout.length > 0;
+        if (ok) {
+            const sig = Buffer.from(res.stdout, "binary").slice(0, 8).toString("hex");
             return NextResponse.json({
                 ok: true,
-                version: (result.stdout || result.stderr || "").trim(),
-                binary: rembgBin,
+                result: sig === "89504e470d0a1a0a" ? "PNG_OK" : "BYTES_OK",
+                bytes: Buffer.byteLength(res.stdout, "binary"),
                 modelsDir,
             });
         }
-
-        return NextResponse.json(
-            {
-                ok: false,
-                message: `rembg exited with code ${result.status}`,
-                stderr: result.stderr,
-                modelsDir,
-            },
-            { status: 500 }
-        );
-    } catch (err) {
-        return NextResponse.json(
-            { ok: false, message: `Exception: ${err.message}`, modelsDir },
-            { status: 500 }
-        );
+        return NextResponse.json({ ok: false, step: "exec", code: res.status, stderr: res.stderr?.toString?.() || "", modelsDir }, { status: 500 });
+    } catch (e) {
+        return NextResponse.json({ ok: false, step: "exception", message: e.message, modelsDir }, { status: 500 });
     }
 }

@@ -5,10 +5,53 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg python3 python3-venv python3-pip ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
-# rembg (CPU) in a small venv
+# rembg (CPU) in a small venv — use LIBRARY ONLY (no CLI)
 RUN python3 -m venv /opt/pyenv \
  && /opt/pyenv/bin/pip install --no-cache-dir --upgrade pip \
- && /opt/pyenv/bin/pip install --no-cache-dir "rembg[cpu,cli]"
+ && /opt/pyenv/bin/pip install --no-cache-dir \
+    "rembg[cpu]==2.0.56" \
+    "Pillow>=9.5" \
+    "numpy>=1.23"
+
+# A tiny helper that reads image bytes from stdin, removes BG via rembg API, writes PNG to stdout
+RUN printf '%s\n' \
+'#!/opt/pyenv/bin/python' \
+'import sys, os, io' \
+'from PIL import Image' \
+'from rembg import remove, new_session' \
+'import argparse' \
+'' \
+'def main():' \
+'    ap = argparse.ArgumentParser()' \
+'    ap.add_argument("--model", default="auto")' \
+'    ap.add_argument("--alpha-matting", action="store_true")' \
+'    ap.add_argument("--only-mask", action="store_true")' \
+'    args = ap.parse_args()' \
+'' \
+'    data = sys.stdin.buffer.read()' \
+'    if not data:' \
+'        print("no stdin data", file=sys.stderr)' \
+'        sys.exit(2)' \
+'' \
+'    img = Image.open(io.BytesIO(data)).convert("RGBA")' \
+'    session = None' \
+'    if args.model and args.model != "auto":' \
+'        session = new_session(args.model)' \
+'' \
+'    out = remove(' \
+'        img,' \
+'        session=session,' \
+'        alpha_matting=args.alpha_matting,' \
+'        only_mask=args.only_mask' \
+'    )' \
+'' \
+'    buf = io.BytesIO()' \
+'    out.save(buf, format="PNG")' \
+'    sys.stdout.buffer.write(buf.getvalue())' \
+'' \
+'if __name__ == "__main__":' \
+'    main()' \
+> /opt/pyenv/bin/rembg_pipe.py && chmod +x /opt/pyenv/bin/rembg_pipe.py    
 
 # Make rembg visible and set model cache dir
 ENV PATH="/opt/pyenv/bin:${PATH}" \
